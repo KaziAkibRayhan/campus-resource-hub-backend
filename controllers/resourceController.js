@@ -86,6 +86,7 @@ exports.getResources = async (req, res) => {
       course,
       search,
       approved,
+      isPending,
       sortBy = "createdAt",
       order = "desc",
       page = 1,
@@ -101,6 +102,9 @@ exports.getResources = async (req, res) => {
       (req.user.role !== "admin" && req.user.role !== "moderator")
     ) {
       query.approved = true;
+    } else if (isPending === "true") {
+      query.approved = false;
+      query.rejectionReason = { $exists: false };
     } else if (approved !== undefined) {
       query.approved = approved === "true";
     }
@@ -223,7 +227,15 @@ exports.updateResource = async (req, res) => {
 
     resource = await Resource.findByIdAndUpdate(
       req.params.id,
-      { title, description, course, department, semester, approved: false },
+      {
+        title,
+        description,
+        course,
+        department,
+        semester,
+        approved: false,
+        rejectionReason: undefined,
+      },
       { new: true, runValidators: true }
     ).populate("uploadedBy", "name email studentId");
 

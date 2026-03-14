@@ -20,7 +20,7 @@ app.use(express.urlencoded({ extended: true }));
 // CORS configuration
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin: [process.env.CLIENT_URL, "http://localhost:5173"],
     credentials: true,
   })
 );
@@ -28,12 +28,14 @@ app.use(
 // Routes
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use('/api/resources', require('./routes/resourceRoutes'));
+app.use('/api/announcements', require('./routes/announcementRoutes'));
+app.use('/api/events', require('./routes/eventRoutes'));
 
 // Test route
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: "Campus Resource Hub API is running",
+    message: "Campus Resource Hub API is running flame icon",
   });
 });
 

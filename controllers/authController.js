@@ -10,7 +10,7 @@ exports.signup = async (req, res) => {
     const { name, email, password, studentId, department } = req.body;
 
     // Check if user already exists
-    const userExists = await User.findOne({ email });
+    const userExists = await User.findOne({ email: email.toLowerCase() });
     if (userExists) {
       return res.status(400).json({
         success: false,
@@ -84,7 +84,7 @@ exports.login = async (req, res) => {
     }
 
     // Check for user (include password for comparison)
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
 
     if (!user) {
       return res.status(401).json({
