@@ -56,7 +56,8 @@ exports.createAnnouncement = async (req, res) => {
       content,
       department,
       postedBy: req.user._id,
-      approved: req.user.role === "admin" || req.user.role === "moderator", // Auto-approve if admin/moderator
+      // Auto-approve if admin/moderator
+      approved: req.user.role === "admin" || req.user.role === "moderator",
     });
 
     res.status(201).json({

@@ -12,7 +12,11 @@ const {
   incrementDownload,
   getMyUploads,
 } = require("../controllers/resourceController");
-const { protect, authorize } = require("../middleware/authMiddleware");
+const {
+  protect,
+  authorize,
+  optionalProtect,
+} = require("../middleware/authMiddleware");
 const { upload, handleUploadError } = require("../middleware/uploadMiddleware");
 
 const router = express.Router();
@@ -55,7 +59,7 @@ const handleValidationErrors = (req, res, next) => {
 };
 
 // Public routes
-router.get("/", getResources);
+router.get("/", optionalProtect, getResources);
 router.get("/:id", getResourceById);
 
 // Protected routes (authenticated users)

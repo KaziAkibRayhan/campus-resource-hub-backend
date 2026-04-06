@@ -44,6 +44,8 @@ exports.uploadResource = async (req, res) => {
       fileSize: req.file.size,
       cloudinaryPublicId: req.file.filename,
       uploadedBy: req.user._id,
+      // Default to not approved for everyone to allow testing of the approval flow
+      approved: false,
     });
 
     // Populate uploader info
@@ -96,17 +98,26 @@ exports.getResources = async (req, res) => {
     // Build query
     const query = {};
 
-    // Only show approved resources to non-admin users
-    if (
-      !req.user ||
-      (req.user.role !== "admin" && req.user.role !== "moderator")
-    ) {
-      query.approved = true;
-    } else if (isPending === "true") {
+    // Default visibility: Only show approved resources for the public list
+    // Unless specific filters are provided by an admin
+    if (isPending === "true" && req.user && (req.user.role === "admin" || req.user.role === "moderator")) {
       query.approved = false;
-      query.rejectionReason = { $exists: false };
-    } else if (approved !== undefined) {
-      query.approved = approved === "true";
+      query.$and = [
+        {
+          $or: [
+            { rejectionReason: { $exists: false } },
+            { rejectionReason: null },
+            { rejectionReason: "" },
+          ],
+        },
+      ];
+    } else if (approved === "false" && req.user && (req.user.role === "admin" || req.user.role === "moderator")) {
+      query.approved = false;
+    } else if (approved === "true") {
+      query.approved = true;
+    } else {
+      // Default for everyone (including admins in the public view)
+      query.approved = true;
     }
 
     // Filter by department
@@ -126,11 +137,19 @@ exports.getResources = async (req, res) => {
 
     // Search in title and description
     if (search) {
-      query.$or = [
-        { title: new RegExp(search, "i") },
-        { description: new RegExp(search, "i") },
-        { course: new RegExp(search, "i") },
-      ];
+      const searchOR = {
+        $or: [
+          { title: new RegExp(search, "i") },
+          { description: new RegExp(search, "i") },
+          { course: new RegExp(search, "i") },
+        ],
+      };
+
+      if (query.$and) {
+        query.$and.push(searchOR);
+      } else {
+        query.$and = [searchOR];
+      }
     }
 
     // Pagination

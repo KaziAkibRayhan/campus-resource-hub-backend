@@ -5,11 +5,15 @@ const {
   approveAnnouncement,
   deleteAnnouncement,
 } = require("../controllers/announcementController");
-const { protect, authorize } = require("../middleware/authMiddleware");
+const {
+  protect,
+  authorize,
+  optionalProtect,
+} = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-router.get("/", getAnnouncements);
+router.get("/", optionalProtect, getAnnouncements);
 router.post("/", protect, createAnnouncement);
 router.put("/:id/approve", protect, authorize("admin"), approveAnnouncement);
 router.delete("/:id", protect, deleteAnnouncement);
