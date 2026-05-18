@@ -1,10 +1,13 @@
 // backend/server.js
 const express = require("express");
+const http = require("http");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const { Server } = require("socket.io");
 const connectDB = require("./config/db");
+const initializeSocket = require("./socket");
 
 // Load environment variables
 dotenv.config();
@@ -14,6 +17,18 @@ connectDB();
 
 // Initialize Express app
 const app = express();
+const server = http.createServer(app);
+const allowedOrigins = [process.env.CLIENT_URL, "http://localhost:5173"].filter(
+  Boolean
+);
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    credentials: true,
+  },
+});
+
+initializeSocket(io);
 
 // Middleware
 app.use(helmet());
@@ -37,7 +52,7 @@ app.use(
 // CORS configuration
 app.use(
   cors({
-    origin: [process.env.CLIENT_URL, "http://localhost:5173"],
+    origin: allowedOrigins,
     credentials: true,
   })
 );
@@ -51,6 +66,7 @@ app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/lost-found', require('./routes/lostFoundRoutes'));
 app.use('/api/clubs', require('./routes/clubRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
+app.use('/api/chat', require('./routes/chatRoutes'));
 
 // Test route
 app.get("/", (req, res) => {
@@ -80,7 +96,7 @@ app.use((req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(
     `🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`
   );

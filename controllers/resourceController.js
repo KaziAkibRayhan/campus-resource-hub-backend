@@ -29,6 +29,10 @@ exports.uploadResource = async (req, res) => {
         "XLSX",
       "application/msword": "DOCX",
       "application/vnd.ms-powerpoint": "PPTX",
+      "image/jpeg": "IMAGE",
+      "image/jpg": "IMAGE",
+      "image/png": "IMAGE",
+      "image/webp": "IMAGE",
     };
 
     const fileType = fileTypeMap[req.file.mimetype] || "PDF";
@@ -44,6 +48,9 @@ exports.uploadResource = async (req, res) => {
       fileType,
       fileSize: req.file.size,
       cloudinaryPublicId: req.file.filename,
+      cloudinaryResourceType: req.file.mimetype.startsWith("image/")
+        ? "image"
+        : "raw",
       uploadedBy: req.user._id,
       // Default to not approved for everyone to allow testing of the approval flow
       approved: false,
@@ -64,7 +71,7 @@ exports.uploadResource = async (req, res) => {
     if (req.file && req.file.filename) {
       try {
         await cloudinary.uploader.destroy(req.file.filename, {
-          resource_type: "raw",
+          resource_type: req.file.mimetype?.startsWith("image/") ? "image" : "raw",
         });
       } catch (deleteError) {
         console.error("Error deleting file from Cloudinary:", deleteError);
@@ -325,7 +332,7 @@ exports.deleteResource = async (req, res) => {
     // Delete file from Cloudinary
     try {
       await cloudinary.uploader.destroy(resource.cloudinaryPublicId, {
-        resource_type: "raw",
+        resource_type: resource.cloudinaryResourceType || "raw",
       });
     } catch (error) {
       console.error("Error deleting from Cloudinary:", error);

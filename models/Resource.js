@@ -38,7 +38,7 @@ const resourceSchema = new mongoose.Schema(
     fileType: {
       type: String,
       required: [true, "File type is required"],
-      enum: ["PDF", "DOCX", "PPTX", "XLSX"],
+      enum: ["PDF", "DOCX", "PPTX", "XLSX", "IMAGE"],
     },
     fileSize: {
       type: Number, // in bytes
@@ -47,6 +47,11 @@ const resourceSchema = new mongoose.Schema(
     cloudinaryPublicId: {
       type: String,
       required: true,
+    },
+    cloudinaryResourceType: {
+      type: String,
+      enum: ["raw", "image"],
+      default: "raw",
     },
     uploadedBy: {
       type: mongoose.Schema.Types.ObjectId,

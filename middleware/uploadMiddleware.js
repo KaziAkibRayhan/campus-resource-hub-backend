@@ -12,6 +12,10 @@ const allowedMimeTypes = [
   "application/vnd.ms-powerpoint", // PPT
   "application/msword", // DOC
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // XLSX
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
 ];
 
 // File filter
@@ -33,8 +37,8 @@ const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
     folder: "campus-resources",
-    allowed_formats: ["pdf", "docx", "pptx", "xlsx", "doc", "ppt"],
-    resource_type: "raw", // Important for non-image files
+    allowed_formats: ["pdf", "docx", "pptx", "xlsx", "doc", "ppt", "jpg", "jpeg", "png", "webp"],
+    resource_type: "auto",
   },
 });
 
@@ -44,6 +48,16 @@ const imageStorage = new CloudinaryStorage({
     folder: "campus-lost-found",
     allowed_formats: ["jpg", "jpeg", "png", "webp"],
     resource_type: "image",
+  },
+});
+
+const profileImageStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "campus-profiles",
+    allowed_formats: ["jpg", "jpeg", "png", "webp"],
+    resource_type: "image",
+    transformation: [{ width: 500, height: 500, crop: "fill", gravity: "face" }],
   },
 });
 
@@ -70,6 +84,22 @@ const uploadImage = multer({
   },
 });
 
+const imageFileFilter = (req, file, cb) => {
+  if (["image/jpeg", "image/jpg", "image/png", "image/webp"].includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("Invalid image type. Only JPG, PNG, and WEBP are allowed."), false);
+  }
+};
+
+const uploadProfileImage = multer({
+  storage: profileImageStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter: imageFileFilter,
+});
+
 // Error handling middleware
 const handleUploadError = (err, req, res, next) => {
   if (err instanceof multer.MulterError) {
@@ -92,4 +122,4 @@ const handleUploadError = (err, req, res, next) => {
   next();
 };
 
-module.exports = { upload, uploadImage, handleUploadError };
+module.exports = { upload, uploadImage, uploadProfileImage, handleUploadError };

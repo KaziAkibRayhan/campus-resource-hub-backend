@@ -48,6 +48,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    profileImagePublicId: {
+      type: String,
+      default: "",
+    },
     isApproved: { type: Boolean, default: true },
     isBlocked: { type: Boolean, default: false },
   },

@@ -1,6 +1,17 @@
 // backend/controllers/authController.js
 const User = require('../models/User');
 const generateToken = require('../utils/generateToken');
+const cloudinary = require("../config/cloudinary");
+
+const toUserResponse = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  studentId: user.studentId,
+  department: user.department,
+  role: user.role,
+  profileImage: user.profileImage,
+});
 
 // @desc    Register a new user
 // @route   POST /api/auth/signup
@@ -45,12 +56,7 @@ exports.signup = async (req, res) => {
         message: 'User registered successfully',
         token,
         user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          studentId: user.studentId,
-          department: user.department,
-          role: user.role,
+          ...toUserResponse(user),
         },
       });
     } else {
@@ -119,12 +125,7 @@ exports.login = async (req, res) => {
       message: 'Login successful',
       token,
       user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        studentId: user.studentId,
-        department: user.department,
-        role: user.role,
+        ...toUserResponse(user),
       },
     });
   } catch (error) {
@@ -145,15 +146,7 @@ exports.getMe = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        studentId: user.studentId,
-        department: user.department,
-        role: user.role,
-        profileImage: user.profileImage,
-      },
+      user: toUserResponse(user),
     });
   } catch (error) {
     console.error('Get user error:', error);
@@ -169,7 +162,7 @@ exports.getMe = async (req, res) => {
 // @access  Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { name, email, studentId, department } = req.body;
+    const { name, email, department, currentPassword, newPassword } = req.body;
 
     const user = await User.findById(req.user.id);
 
@@ -191,36 +184,51 @@ exports.updateProfile = async (req, res) => {
       }
     }
 
-    // Check if student ID is being changed and if it already exists
-    if (studentId && studentId !== user.studentId) {
-      const studentIdExists = await User.findOne({ studentId });
-      if (studentIdExists) {
-        return res.status(400).json({
-          success: false,
-          message: 'Student ID already in use',
-        });
-      }
-    }
-
     // Update fields
     user.name = name || user.name;
     user.email = email || user.email;
-    user.studentId = studentId || user.studentId;
     user.department = department || user.department;
+
+    if (req.file) {
+      if (user.profileImagePublicId) {
+        try {
+          await cloudinary.uploader.destroy(user.profileImagePublicId);
+        } catch (deleteError) {
+          console.error("Profile image delete error:", deleteError);
+        }
+      }
+
+      user.profileImage = req.file.path;
+      user.profileImagePublicId = req.file.filename;
+    }
+
+    if (newPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "Current password is required to set a new password",
+        });
+      }
+
+      const userWithPassword = await User.findById(req.user.id).select("+password");
+      const isPasswordMatch = await userWithPassword.matchPassword(currentPassword);
+
+      if (!isPasswordMatch) {
+        return res.status(401).json({
+          success: false,
+          message: "Current password is incorrect",
+        });
+      }
+
+      user.password = newPassword;
+    }
 
     const updatedUser = await user.save();
 
     res.status(200).json({
       success: true,
       message: 'Profile updated successfully',
-      user: {
-        id: updatedUser._id,
-        name: updatedUser.name,
-        email: updatedUser.email,
-        studentId: updatedUser.studentId,
-        department: updatedUser.department,
-        role: updatedUser.role,
-      },
+      user: toUserResponse(updatedUser),
     });
   } catch (error) {
     console.error('Update profile error:', error);
