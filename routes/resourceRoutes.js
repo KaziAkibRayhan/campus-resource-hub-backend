@@ -18,6 +18,7 @@ const {
   optionalProtect,
 } = require("../middleware/authMiddleware");
 const { upload, handleUploadError } = require("../middleware/uploadMiddleware");
+const { handleValidationErrors } = require("../utils/validation");
 
 const router = express.Router();
 
@@ -40,27 +41,8 @@ const resourceValidation = [
     .withMessage("Invalid semester"),
 ];
 
-// Validation error handler
-const handleValidationErrors = (req, res, next) => {
-  const { validationResult } = require("express-validator");
-  const errors = validationResult(req);
-
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: "Validation failed",
-      errors: errors.array().map((err) => ({
-        field: err.param,
-        message: err.msg,
-      })),
-    });
-  }
-  next();
-};
-
 // Public routes
 router.get("/", optionalProtect, getResources);
-router.get("/:id", getResourceById);
 
 // Protected routes (authenticated users)
 router.post(
@@ -77,6 +59,8 @@ router.get("/user/my-uploads", protect, getMyUploads);
 router.put("/:id", protect, updateResource);
 router.delete("/:id", protect, deleteResource);
 router.put("/:id/download", protect, incrementDownload);
+
+router.get("/:id", optionalProtect, getResourceById);
 
 // Admin/Moderator only routes
 router.put(

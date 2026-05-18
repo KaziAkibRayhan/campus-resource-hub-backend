@@ -1,11 +1,12 @@
 const Announcement = require("../models/Announcement");
+const Notification = require("../models/Notification");
 
 // @desc    Get all announcements
 // @route   GET /api/announcements
 // @access  Public
 exports.getAnnouncements = async (req, res) => {
   try {
-    const { department, search, approved } = req.query;
+    const { department, search, approved, limit } = req.query;
     const query = {};
 
     if (
@@ -27,9 +28,16 @@ exports.getAnnouncements = async (req, res) => {
       query.title = { $regex: search, $options: "i" };
     }
 
-    const announcements = await Announcement.find(query)
+    let announcementsQuery = Announcement.find(query)
       .populate("postedBy", "name email")
-      .sort("-createdAt");
+      .sort("-createdAt")
+      .lean();
+
+    if (limit) {
+      announcementsQuery = announcementsQuery.limit(parseInt(limit));
+    }
+
+    const announcements = await announcementsQuery;
 
     res.status(200).json({
       success: true,
@@ -89,7 +97,15 @@ exports.approveAnnouncement = async (req, res) => {
 
     announcement.approved = true;
     announcement.approvedBy = req.user._id;
+    announcement.rejectionReason = "";
     await announcement.save();
+
+    await Notification.create({
+      user: announcement.postedBy,
+      title: "Announcement approved",
+      message: `"${announcement.title}" is now visible.`,
+      type: "announcement",
+    });
 
     res.status(200).json({
       success: true,
@@ -100,6 +116,44 @@ exports.approveAnnouncement = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || "Error approving announcement",
+    });
+  }
+};
+
+// @desc    Reject announcement
+// @route   PUT /api/announcements/:id/reject
+// @access  Private (Admin/Moderator)
+exports.rejectAnnouncement = async (req, res) => {
+  try {
+    const announcement = await Announcement.findById(req.params.id);
+
+    if (!announcement) {
+      return res.status(404).json({
+        success: false,
+        message: "Announcement not found",
+      });
+    }
+
+    announcement.approved = false;
+    announcement.rejectionReason = req.body.reason || "Does not meet posting standards";
+    await announcement.save();
+
+    await Notification.create({
+      user: announcement.postedBy,
+      title: "Announcement rejected",
+      message: `"${announcement.title}" needs revision. Reason: ${announcement.rejectionReason}`,
+      type: "announcement",
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Announcement rejected",
+      announcement,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Error rejecting announcement",
     });
   }
 };

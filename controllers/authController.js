@@ -152,7 +152,7 @@ exports.getMe = async (req, res) => {
         studentId: user.studentId,
         department: user.department,
         role: user.role,
-        profilePicture: user.profilePicture,
+        profileImage: user.profileImage,
       },
     });
   } catch (error) {

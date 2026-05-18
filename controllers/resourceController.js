@@ -1,5 +1,6 @@
 // backend/controllers/resourceController.js
 const Resource = require("../models/Resource");
+const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
 
 // @desc    Upload a new resource
@@ -155,16 +156,20 @@ exports.getResources = async (req, res) => {
     // Pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    const allowedSortFields = ["createdAt", "downloads", "rating", "title", "course"];
+    const safeSortBy = allowedSortFields.includes(sortBy) ? sortBy : "createdAt";
+
     // Sort options
     const sortOptions = {};
-    sortOptions[sortBy] = order === "desc" ? -1 : 1;
+    sortOptions[safeSortBy] = order === "desc" ? -1 : 1;
 
     // Execute query
     const resources = await Resource.find(query)
       .populate("uploadedBy", "name email studentId")
       .sort(sortOptions)
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .lean();
 
     // Get total count
     const total = await Resource.countDocuments(query);
@@ -203,9 +208,28 @@ exports.getResourceById = async (req, res) => {
       });
     }
 
+    const isOwner =
+      req.user && resource.uploadedBy._id.toString() === req.user._id.toString();
+    const canModerate =
+      req.user && (req.user.role === "admin" || req.user.role === "moderator");
+
+    if (!resource.approved && !isOwner && !canModerate) {
+      return res.status(404).json({
+        success: false,
+        message: "Resource not found",
+      });
+    }
+
     // Increment views
     resource.views += 1;
     await resource.save();
+
+    await Notification.create({
+      user: resource.uploadedBy,
+      title: "Resource approved",
+      message: `"${resource.title}" is now visible to students.`,
+      type: "resource",
+    });
 
     res.status(200).json({
       success: true,
@@ -380,6 +404,13 @@ exports.rejectResource = async (req, res) => {
 
     await resource.save();
 
+    await Notification.create({
+      user: resource.uploadedBy,
+      title: "Resource rejected",
+      message: `"${resource.title}" needs revision. Reason: ${resource.rejectionReason}`,
+      type: "resource",
+    });
+
     res.status(200).json({
       success: true,
       message: "Resource rejected",
@@ -431,7 +462,8 @@ exports.getMyUploads = async (req, res) => {
   try {
     const resources = await Resource.find({ uploadedBy: req.user._id })
       .sort({ createdAt: -1 })
-      .populate("approvedBy", "name");
+      .populate("approvedBy", "name")
+      .lean();
 
     res.status(200).json({
       success: true,

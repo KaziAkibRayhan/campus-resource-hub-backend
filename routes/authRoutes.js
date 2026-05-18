@@ -9,6 +9,7 @@ const {
   changePassword,
 } = require("../controllers/authController");
 const { protect } = require("../middleware/authMiddleware");
+const { handleValidationErrors } = require("../utils/validation");
 
 const router = express.Router();
 
@@ -49,24 +50,6 @@ const loginValidation = [
     .withMessage("Please provide a valid email"),
   body("password").notEmpty().withMessage("Password is required"),
 ];
-
-// Validation error handler
-const handleValidationErrors = (req, res, next) => {
-  const { validationResult } = require("express-validator");
-  const errors = validationResult(req);
-
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: "Validation failed",
-      errors: errors.array().map((err) => ({
-        field: err.param,
-        message: err.msg,
-      })),
-    });
-  }
-  next();
-};
 
 // Public routes
 router.post("/signup", signupValidation, handleValidationErrors, signup);

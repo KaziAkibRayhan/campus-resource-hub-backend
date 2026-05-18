@@ -39,10 +39,29 @@ const eventSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    rejectionReason: {
+      type: String,
+      default: "",
+    },
+    registrations: [
+      {
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        registeredAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
   {
     timestamps: true,
   }
 );
+
+eventSchema.index({ approved: 1, date: 1 });
 
 module.exports = mongoose.model("Event", eventSchema);

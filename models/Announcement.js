@@ -33,10 +33,16 @@ const announcementSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    rejectionReason: {
+      type: String,
+      default: "",
+    },
   },
   {
     timestamps: true,
   }
 );
+
+announcementSchema.index({ approved: 1, department: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Announcement", announcementSchema);

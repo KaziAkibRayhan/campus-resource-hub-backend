@@ -38,6 +38,15 @@ const storage = new CloudinaryStorage({
   },
 });
 
+const imageStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "campus-lost-found",
+    allowed_formats: ["jpg", "jpeg", "png", "webp"],
+    resource_type: "image",
+  },
+});
+
 // Multer upload configuration
 const upload = multer({
   storage: storage,
@@ -45,6 +54,20 @@ const upload = multer({
     fileSize: parseInt(process.env.MAX_FILE_SIZE) || 20 * 1024 * 1024, // 20MB default
   },
   fileFilter: fileFilter,
+});
+
+const uploadImage = multer({
+  storage: imageStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    if (["image/jpeg", "image/jpg", "image/png", "image/webp"].includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Invalid image type. Only JPG, PNG, and WEBP are allowed."), false);
+    }
+  },
 });
 
 // Error handling middleware
@@ -69,4 +92,4 @@ const handleUploadError = (err, req, res, next) => {
   next();
 };
 
-module.exports = { upload, handleUploadError };
+module.exports = { upload, uploadImage, handleUploadError };

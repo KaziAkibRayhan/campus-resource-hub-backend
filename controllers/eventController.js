@@ -1,11 +1,12 @@
 const Event = require("../models/Event");
+const Notification = require("../models/Notification");
 
 // @desc    Get all events
 // @route   GET /api/events
 // @access  Public
 exports.getEvents = async (req, res) => {
   try {
-    const { search, approved } = req.query;
+    const { search, approved, limit } = req.query;
     const query = {};
 
     if (
@@ -23,19 +24,74 @@ exports.getEvents = async (req, res) => {
       query.title = { $regex: search, $options: "i" };
     }
 
-    const events = await Event.find(query)
+    let eventsQuery = Event.find(query)
       .populate("postedBy", "name email")
-      .sort("date");
+      .sort("date")
+      .lean();
+
+    if (limit) {
+      eventsQuery = eventsQuery.limit(parseInt(limit));
+    }
+
+    const events = await eventsQuery;
+
+    const currentUserId = req.user?._id?.toString();
+    const shapedEvents = events.map((event) => ({
+      ...event,
+      registrationCount: event.registrations?.length || 0,
+      isRegistered: currentUserId
+        ? event.registrations?.some(
+            (registration) => registration.user.toString() === currentUserId
+          )
+        : false,
+    }));
 
     res.status(200).json({
       success: true,
-      count: events.length,
-      events,
+      count: shapedEvents.length,
+      events: shapedEvents,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
       message: error.message || "Error fetching events",
+    });
+  }
+};
+
+// @desc    Register for an event
+// @route   POST /api/events/:id/register
+// @access  Private
+exports.registerEvent = async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id);
+
+    if (!event || !event.approved) {
+      return res.status(404).json({
+        success: false,
+        message: "Event not found",
+      });
+    }
+
+    const alreadyRegistered = event.registrations.some(
+      (registration) => registration.user.toString() === req.user._id.toString()
+    );
+
+    if (!alreadyRegistered) {
+      event.registrations.push({ user: req.user._id });
+      await event.save();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Registered for event",
+      registrationCount: event.registrations.length,
+    });
+  } catch (error) {
+    console.error("Register event error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error registering for event",
     });
   }
 };
@@ -86,7 +142,15 @@ exports.approveEvent = async (req, res) => {
     }
 
     event.approved = true;
+    event.rejectionReason = "";
     await event.save();
+
+    await Notification.create({
+      user: event.postedBy,
+      title: "Event approved",
+      message: `"${event.title}" is now visible.`,
+      type: "event",
+    });
 
     res.status(200).json({
       success: true,
@@ -97,6 +161,44 @@ exports.approveEvent = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || "Error approving event",
+    });
+  }
+};
+
+// @desc    Reject event
+// @route   PUT /api/events/:id/reject
+// @access  Private (Admin/Moderator)
+exports.rejectEvent = async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id);
+
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: "Event not found",
+      });
+    }
+
+    event.approved = false;
+    event.rejectionReason = req.body.reason || "Does not meet event standards";
+    await event.save();
+
+    await Notification.create({
+      user: event.postedBy,
+      title: "Event rejected",
+      message: `"${event.title}" needs revision. Reason: ${event.rejectionReason}`,
+      type: "event",
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Event rejected",
+      event,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Error rejecting event",
     });
   }
 };
