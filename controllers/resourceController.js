@@ -2,6 +2,7 @@
 const Resource = require("../models/Resource");
 const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
+const { sendNotification } = require("../utils/notificationHelper");
 
 // @desc    Upload a new resource
 // @route   POST /api/resources
@@ -231,13 +232,6 @@ exports.getResourceById = async (req, res) => {
     resource.views += 1;
     await resource.save();
 
-    await Notification.create({
-      user: resource.uploadedBy,
-      title: "Resource approved",
-      message: `"${resource.title}" is now visible to students.`,
-      type: "resource",
-    });
-
     res.status(200).json({
       success: true,
       resource,
@@ -376,6 +370,15 @@ exports.approveResource = async (req, res) => {
 
     await resource.populate("uploadedBy", "name email");
 
+    // Send real-time notification
+    await sendNotification(req.io, {
+      user: resource.uploadedBy._id,
+      title: "Resource Approved!",
+      message: `Your resource "${resource.title}" has been approved and is now visible to everyone.`,
+      type: "resource",
+      link: `/resources`,
+    });
+
     res.status(200).json({
       success: true,
       message: "Resource approved successfully",
@@ -411,11 +414,15 @@ exports.rejectResource = async (req, res) => {
 
     await resource.save();
 
-    await Notification.create({
-      user: resource.uploadedBy,
-      title: "Resource rejected",
-      message: `"${resource.title}" needs revision. Reason: ${resource.rejectionReason}`,
+    await resource.populate("uploadedBy", "name email");
+
+    // Send real-time notification
+    await sendNotification(req.io, {
+      user: resource.uploadedBy._id,
+      title: "Resource Rejected",
+      message: `Your resource "${resource.title}" was rejected. Reason: ${resource.rejectionReason}`,
       type: "resource",
+      link: `/my-uploads`,
     });
 
     res.status(200).json({

@@ -85,3 +85,34 @@ exports.authorize = (...roles) => {
     next();
   };
 };
+
+// Verify chat access - Check if user can access chat features
+exports.verifyChatAccess = async (req, res, next) => {
+  try {
+    const user = req.user;
+
+    // Check if user is approved
+    if (!user.isApproved) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is pending approval. Please contact admin.",
+      });
+    }
+
+    // Check if user is blocked
+    if (user.isBlocked) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account has been blocked. Please contact admin.",
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error("Chat access verification error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error verifying chat access",
+    });
+  }
+};

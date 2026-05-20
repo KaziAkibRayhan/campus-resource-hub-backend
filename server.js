@@ -31,6 +31,11 @@ const io = new Server(server, {
 initializeSocket(io);
 
 // Middleware
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
 app.use(helmet());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

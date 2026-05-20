@@ -19,8 +19,28 @@ const notificationSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["resource", "announcement", "event", "lost-found", "system"],
+      enum: [
+        "message",
+        "group_message",
+        "resource",
+        "announcement",
+        "event",
+        "lost-found",
+        "system",
+        "mention",
+        "group_invite",
+      ],
       default: "system",
+    },
+    sender: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    link: {
+      type: String,
+    },
+    metadata: {
+      type: Object,
     },
     read: {
       type: Boolean,

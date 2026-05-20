@@ -4,15 +4,32 @@ const conversationSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ["direct"],
+      enum: ["direct", "group"],
       default: "direct",
       required: true,
+    },
+    name: {
+      type: String,
+      trim: true,
+    },
+    description: {
+      type: String,
+      trim: true,
+    },
+    image: {
+      type: String,
     },
     members: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
         required: true,
+      },
+    ],
+    admins: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
       },
     ],
     createdBy: {

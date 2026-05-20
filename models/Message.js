@@ -14,9 +14,27 @@ const messageSchema = new mongoose.Schema(
     },
     text: {
       type: String,
-      required: true,
       trim: true,
       maxlength: [2000, "Message cannot exceed 2000 characters"],
+    },
+    attachments: [
+      {
+        fileUrl: String,
+        fileType: String,
+        fileName: String,
+        fileSize: Number,
+        thumbnailUrl: String,
+        publicId: String,
+        mimeType: String,
+      },
+    ],
+    isEdited: {
+      type: Boolean,
+      default: false,
+    },
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Message",
     },
     deliveredTo: [
       {
