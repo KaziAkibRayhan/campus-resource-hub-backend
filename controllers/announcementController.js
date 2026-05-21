@@ -6,19 +6,18 @@ const Notification = require("../models/Notification");
 // @access  Public
 exports.getAnnouncements = async (req, res) => {
   try {
-    const { department, search, approved, limit } = req.query;
+    const { department, search, approved, limit, mine } = req.query;
     const query = {};
 
-    if (
-      !req.user ||
-      (req.user.role !== "admin" && req.user.role !== "moderator")
-    ) {
+    // Filter by current user's own posts
+    if (mine === "true" && req.user) {
+      query.postedBy = req.user._id;
+    } else if (!req.user || (req.user.role !== "admin" && req.user.role !== "moderator")) {
       query.approved = true;
     } else if (approved !== undefined) {
       query.approved = approved === "true";
-    } else {
-      query.approved = true; // Default to approved for admin too if not specified
     }
+    // admin/moderator with no filter → sees all
 
     if (department && department !== "All") {
       query.department = { $in: [department, "All"] };
@@ -64,8 +63,9 @@ exports.createAnnouncement = async (req, res) => {
       content,
       department,
       postedBy: req.user._id,
-      // Auto-approve if admin/moderator
-      approved: req.user.role === "admin" || req.user.role === "moderator",
+      approved: true,
+      approvedBy: req.user._id,
+      approvedAt: Date.now(),
     });
 
     res.status(201).json({
@@ -155,6 +155,32 @@ exports.rejectAnnouncement = async (req, res) => {
       success: false,
       message: error.message || "Error rejecting announcement",
     });
+  }
+};
+
+// @desc    Update announcement
+// @route   PUT /api/announcements/:id
+// @access  Private (Owner/Admin)
+exports.updateAnnouncement = async (req, res) => {
+  try {
+    const announcement = await Announcement.findById(req.params.id);
+    if (!announcement) {
+      return res.status(404).json({ success: false, message: "Announcement not found" });
+    }
+    if (
+      announcement.postedBy.toString() !== req.user._id.toString() &&
+      req.user.role !== "admin" && req.user.role !== "moderator"
+    ) {
+      return res.status(401).json({ success: false, message: "Not authorized" });
+    }
+    const { title, content, department } = req.body;
+    if (title)      announcement.title      = title;
+    if (content)    announcement.content    = content;
+    if (department) announcement.department = department;
+    await announcement.save();
+    res.status(200).json({ success: true, message: "Announcement updated", announcement });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message || "Error updating announcement" });
   }
 };
 

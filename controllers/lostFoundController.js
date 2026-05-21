@@ -17,18 +17,16 @@ exports.createItem = async (req, res) => {
       imageUrl: req.file?.path || "",
       cloudinaryPublicId: req.file?.filename || "",
       postedBy: req.user._id,
-      approved: canModerate(req.user),
-      approvedBy: canModerate(req.user) ? req.user._id : undefined,
-      approvedAt: canModerate(req.user) ? Date.now() : undefined,
+      approved: true,
+      approvedBy: req.user._id,
+      approvedAt: Date.now(),
     });
 
     await lostFoundItem.populate("postedBy", "name email studentId");
 
     res.status(201).json({
       success: true,
-      message: lostFoundItem.approved
-        ? "Item posted successfully"
-        : "Item submitted for approval",
+      message: "Item posted successfully",
       item: lostFoundItem,
     });
   } catch (error) {
@@ -55,8 +53,9 @@ exports.getItems = async (req, res) => {
 
     if (mine === "true" && req.user) {
       query.postedBy = req.user._id;
-    } else if (canModerate(req.user) && approved !== undefined) {
-      query.approved = approved === "true";
+    } else if (canModerate(req.user)) {
+      // admin/moderator: apply filter only if explicitly provided, else see all
+      if (approved !== undefined) query.approved = approved === "true";
     } else {
       query.approved = true;
     }

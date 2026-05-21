@@ -6,19 +6,17 @@ const Notification = require("../models/Notification");
 // @access  Public
 exports.getEvents = async (req, res) => {
   try {
-    const { search, approved, limit } = req.query;
+    const { search, approved, limit, mine } = req.query;
     const query = {};
 
-    if (
-      !req.user ||
-      (req.user.role !== "admin" && req.user.role !== "moderator")
-    ) {
+    if (mine === "true" && req.user) {
+      query.postedBy = req.user._id;
+    } else if (!req.user || (req.user.role !== "admin" && req.user.role !== "moderator")) {
       query.approved = true;
     } else if (approved !== undefined) {
       query.approved = approved === "true";
-    } else {
-      query.approved = true;
     }
+    // admin/moderator with no filter → sees all
 
     if (search) {
       query.title = { $regex: search, $options: "i" };
@@ -111,7 +109,9 @@ exports.createEvent = async (req, res) => {
       time,
       location,
       postedBy: req.user._id,
-      approved: req.user.role === "admin" || req.user.role === "moderator", // Auto-approve if admin/moderator
+      approved: true,
+      approvedBy: req.user._id,
+      approvedAt: Date.now(),
     });
 
     res.status(201).json({
@@ -200,6 +200,35 @@ exports.rejectEvent = async (req, res) => {
       success: false,
       message: error.message || "Error rejecting event",
     });
+  }
+};
+
+// @desc    Update event
+// @route   PUT /api/events/:id
+// @access  Private (Owner/Admin)
+exports.updateEvent = async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id);
+    if (!event) {
+      return res.status(404).json({ success: false, message: "Event not found" });
+    }
+    if (
+      event.postedBy.toString() !== req.user._id.toString() &&
+      req.user.role !== "admin" && req.user.role !== "moderator"
+    ) {
+      return res.status(401).json({ success: false, message: "Not authorized" });
+    }
+    const { title, description, club, date, time, location } = req.body;
+    if (title)       event.title       = title;
+    if (description) event.description = description;
+    if (club)        event.club        = club;
+    if (date)        event.date        = date;
+    if (time)        event.time        = time;
+    if (location)    event.location    = location;
+    await event.save();
+    res.status(200).json({ success: true, message: "Event updated", event });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message || "Error updating event" });
   }
 };
 

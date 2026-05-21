@@ -53,8 +53,9 @@ exports.uploadResource = async (req, res) => {
         ? "image"
         : "raw",
       uploadedBy: req.user._id,
-      // Default to not approved for everyone to allow testing of the approval flow
-      approved: false,
+      approved: true,
+      approvedBy: req.user._id,
+      approvedAt: Date.now(),
     });
 
     // Populate uploader info
@@ -62,7 +63,7 @@ exports.uploadResource = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Resource uploaded successfully. Waiting for admin approval.",
+      message: "Resource uploaded successfully!",
       resource,
     });
   } catch (error) {
@@ -98,6 +99,7 @@ exports.getResources = async (req, res) => {
       search,
       approved,
       isPending,
+      all,
       sortBy = "createdAt",
       order = "desc",
       page = 1,
@@ -106,10 +108,11 @@ exports.getResources = async (req, res) => {
 
     // Build query
     const query = {};
+    const isAdmin = req.user && (req.user.role === "admin" || req.user.role === "moderator");
 
-    // Default visibility: Only show approved resources for the public list
-    // Unless specific filters are provided by an admin
-    if (isPending === "true" && req.user && (req.user.role === "admin" || req.user.role === "moderator")) {
+    if (all === "true" && isAdmin) {
+      // Admin fetching all resources — no approval filter
+    } else if (isPending === "true" && isAdmin) {
       query.approved = false;
       query.$and = [
         {
@@ -120,12 +123,11 @@ exports.getResources = async (req, res) => {
           ],
         },
       ];
-    } else if (approved === "false" && req.user && (req.user.role === "admin" || req.user.role === "moderator")) {
+    } else if (approved === "false" && isAdmin) {
       query.approved = false;
     } else if (approved === "true") {
       query.approved = true;
     } else {
-      // Default for everyone (including admins in the public view)
       query.approved = true;
     }
 
@@ -277,7 +279,7 @@ exports.updateResource = async (req, res) => {
         course,
         department,
         semester,
-        approved: false,
+        approved: true,
         rejectionReason: undefined,
       },
       { new: true, runValidators: true }
@@ -285,7 +287,7 @@ exports.updateResource = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Resource updated successfully. Waiting for re-approval.",
+      message: "Resource updated successfully.",
       resource,
     });
   } catch (error) {

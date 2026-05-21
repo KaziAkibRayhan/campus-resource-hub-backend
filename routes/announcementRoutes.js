@@ -2,6 +2,7 @@ const express = require("express");
 const {
   getAnnouncements,
   createAnnouncement,
+  updateAnnouncement,
   approveAnnouncement,
   rejectAnnouncement,
   deleteAnnouncement,
@@ -28,6 +29,7 @@ router.put(
   authorize("admin", "moderator"),
   rejectAnnouncement
 );
+router.put("/:id", protect, updateAnnouncement);
 router.delete("/:id", protect, deleteAnnouncement);
 
 module.exports = router;
