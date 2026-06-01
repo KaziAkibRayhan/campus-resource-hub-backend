@@ -14,6 +14,8 @@ const {
   uploadAttachment,
   verifyChatAccess,
   downloadAttachment,
+  searchHubInformation,
+  askHubAssistant,
 } = require("../controllers/chatController");
 const { protect } = require("../middleware/authMiddleware");
 const { uploadChatAttachment, handleUploadError } = require("../middleware/uploadMiddleware");
@@ -21,6 +23,8 @@ const { uploadChatAttachment, handleUploadError } = require("../middleware/uploa
 const router = express.Router();
 
 router.post("/verify", protect, verifyChatAccess);
+router.get("/search", protect, searchHubInformation);
+router.post("/assistant", protect, askHubAssistant);
 router.get("/users", protect, getChatUsers);
 router.get("/conversations", protect, getConversations);
 router.post("/conversations/direct", protect, createDirectConversation);
