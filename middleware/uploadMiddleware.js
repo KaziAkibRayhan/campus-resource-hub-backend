@@ -59,28 +59,30 @@ const fileFilter = (req, file, cb) => {
   // Check file extension matches MIME type
   const ext = path.extname(file.originalname).toLowerCase();
   const mimeToExt = {
-    "application/pdf": ".pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
-    "application/vnd.ms-powerpoint": ".ppt",
-    "application/msword": ".doc",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-    "image/jpeg": ".jpg",
-    "image/jpg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-    "image/avif": ".avif",
-    "image/svg+xml": ".svg",
-    "text/plain": ".txt",
-    "application/zip": ".zip",
-    "application/x-zip-compressed": ".zip",
+    "application/pdf": [".pdf"],
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+    "application/vnd.ms-powerpoint": [".ppt"],
+    "application/msword": [".doc"],
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+    "image/jpeg": [".jpg", ".jpeg"],
+    "image/jpg": [".jpg", ".jpeg"],
+    "image/png": [".png"],
+    "image/webp": [".webp"],
+    "image/gif": [".gif"],
+    "image/avif": [".avif"],
+    "image/svg+xml": [".svg"],
+    "text/plain": [".txt"],
+    "application/zip": [".zip"],
+    "application/x-zip-compressed": [".zip"],
   };
 
-  const expectedExt = mimeToExt[file.mimetype];
-  if (expectedExt && !ext.endsWith(expectedExt.replace(/^\./, ''))) {
+  const expectedExts = mimeToExt[file.mimetype];
+  if (expectedExts && !expectedExts.includes(ext)) {
     return cb(
-      new Error(`File extension ${ext} does not match the declared MIME type ${file.mimetype}`),
+      new Error(
+        `File extension ${ext} does not match the declared MIME type ${file.mimetype}`
+      ),
       false
     );
   }
