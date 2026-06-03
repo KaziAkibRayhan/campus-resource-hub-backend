@@ -32,7 +32,7 @@ const userSchema = new mongoose.Schema(
       required: [true, "Please provide a student ID"],
       unique: true,
       trim: true,
-      match: [/^[0-9]+$/, "Student ID must contain only numbers"],
+      match: [/^[0-9]{6,20}$/, "Student ID must be 6 to 20 digits"],
     },
     department: {
       type: String,
@@ -54,6 +54,7 @@ const userSchema = new mongoose.Schema(
     },
     isApproved: { type: Boolean, default: true },
     isBlocked: { type: Boolean, default: false },
+    emailVerified: { type: Boolean, default: true },
   },
   { timestamps: true }
 );
