@@ -3,6 +3,7 @@ const Resource = require("../models/Resource");
 const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
 const { sendNotification } = require("../utils/notificationHelper");
+const mammoth = require("mammoth");
 
 const CONTENT_TYPES_BY_FORMAT = {
   pdf: "application/pdf",
@@ -24,6 +25,53 @@ const CONTENT_TYPES_BY_RESOURCE_TYPE = {
   PPTX: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   XLSX: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   IMAGE: null,
+};
+
+const getFormatFromUrl = (fileUrl = "") =>
+  fileUrl.split(".").pop().split("?")[0].toLowerCase();
+
+const getCloudinaryDeliveryType = (resource) => {
+  const isRaw = /\/raw\/upload\//.test(resource.fileUrl || "");
+  const isImage = /\/image\/upload\//.test(resource.fileUrl || "");
+
+  if (isImage) return "image";
+  if (isRaw) return "raw";
+  return resource.cloudinaryResourceType || "raw";
+};
+
+const fetchResourceBuffer = async (resource) => {
+  const format = getFormatFromUrl(resource.fileUrl || "");
+  const deliveryType = getCloudinaryDeliveryType(resource);
+  const deliveryTypesToTry = [
+    deliveryType,
+    deliveryType === "image" ? "raw" : "image",
+  ];
+  let upstream;
+
+  for (const resourceType of deliveryTypesToTry) {
+    const signedUrl = cloudinary.utils.private_download_url(
+      resource.cloudinaryPublicId,
+      format,
+      { resource_type: resourceType, type: "upload" }
+    );
+
+    upstream = await fetch(signedUrl);
+    if (upstream.ok) break;
+  }
+
+  if (!upstream?.ok) {
+    const error = new Error("Unable to fetch file from storage");
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const arrayBuffer = await upstream.arrayBuffer();
+
+  return {
+    format,
+    upstreamContentType: upstream.headers.get("content-type"),
+    fileBuffer: Buffer.from(arrayBuffer),
+  };
 };
 
 // @desc    Upload a new resource
@@ -484,47 +532,8 @@ exports.streamResourceFile = async (req, res) => {
       });
     }
 
-    // Derive the cloudinary delivery type & file format from the stored URL.
-    const isRaw = /\/raw\/upload\//.test(resource.fileUrl || "");
-    const isImage = /\/image\/upload\//.test(resource.fileUrl || "");
-    const deliveryType = isImage
-      ? "image"
-      : isRaw
-      ? "raw"
-      : resource.cloudinaryResourceType || "raw";
-    const format = (resource.fileUrl || "")
-      .split(".")
-      .pop()
-      .split("?")[0]
-      .toLowerCase();
-
-    // Build a signed, authenticated download URL that bypasses the public
-    // delivery restriction, then proxy the bytes back to the client.
-    const deliveryTypesToTry = [
-      deliveryType,
-      deliveryType === "image" ? "raw" : "image",
-    ];
-    let upstream;
-
-    for (const resourceType of deliveryTypesToTry) {
-      const signedUrl = cloudinary.utils.private_download_url(
-        resource.cloudinaryPublicId,
-        format,
-        { resource_type: resourceType, type: "upload" }
-      );
-
-      upstream = await fetch(signedUrl);
-      if (upstream.ok) break;
-    }
-
-    if (!upstream?.ok) {
-      return res.status(502).json({
-        success: false,
-        message: "Unable to fetch file from storage",
-      });
-    }
-
-    const upstreamContentType = upstream.headers.get("content-type");
+    const { format, upstreamContentType, fileBuffer } =
+      await fetchResourceBuffer(resource);
     const contentType =
       CONTENT_TYPES_BY_RESOURCE_TYPE[resource.fileType] ||
       CONTENT_TYPES_BY_FORMAT[format] ||
@@ -537,8 +546,6 @@ exports.streamResourceFile = async (req, res) => {
       /[^a-z0-9._-]+/gi,
       "_"
     )}.${format}`;
-    const arrayBuffer = await upstream.arrayBuffer();
-    const fileBuffer = Buffer.from(arrayBuffer);
 
     res.setHeader("Content-Type", contentType);
     res.setHeader(
@@ -565,10 +572,81 @@ exports.streamResourceFile = async (req, res) => {
     return res.send(fileBuffer);
   } catch (error) {
     console.error("Stream resource file error:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      message: "Error streaming file",
+      message: error.message || "Error streaming file",
     });
+  }
+};
+
+// @desc    Convert DOCX resources to safe preview HTML
+// @route   GET /api/resources/:id/preview-html
+// @access  Public
+exports.previewResourceHtml = async (req, res) => {
+  try {
+    const resource = await Resource.findById(req.params.id).lean();
+
+    if (!resource) {
+      return res.status(404).send("Resource not found");
+    }
+
+    if (!["DOCX", "DOC"].includes(resource.fileType)) {
+      return res.status(400).send("HTML preview is only available for Word documents");
+    }
+
+    const { fileBuffer } = await fetchResourceBuffer(resource);
+    const result = await mammoth.convertToHtml({ buffer: fileBuffer });
+    const title = (resource.title || "Document").replace(/[<>&"]/g, "");
+
+    res.removeHeader("X-Frame-Options");
+    res.removeHeader("Content-Security-Policy");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Content-Security-Policy", "frame-ancestors *");
+
+    return res.send(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0;
+        padding: 28px;
+        background: #f8fafc;
+        color: #111827;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.65;
+      }
+      main {
+        max-width: 820px;
+        margin: 0 auto;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 18px 50px rgb(15 23 42 / 0.12);
+        padding: 40px;
+      }
+      h1, h2, h3 { line-height: 1.25; color: #0f172a; }
+      p { margin: 0 0 14px; }
+      table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+      td, th { border: 1px solid #cbd5e1; padding: 8px; }
+      img { max-width: 100%; height: auto; }
+      @media (max-width: 640px) {
+        body { padding: 12px; }
+        main { padding: 22px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>${result.value || "<p>No preview content found.</p>"}</main>
+  </body>
+</html>`);
+  } catch (error) {
+    console.error("Preview resource HTML error:", error);
+    return res.status(error.statusCode || 500).send(error.message || "Error creating preview");
   }
 };
 
