@@ -4,19 +4,40 @@ const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
 const { sendNotification } = require("../utils/notificationHelper");
 const mammoth = require("mammoth");
+const { Readable } = require("stream");
 
 const CONTENT_TYPES_BY_FORMAT = {
   pdf: "application/pdf",
   doc: "application/msword",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  docm: "application/vnd.ms-word.document.macroEnabled.12",
+  dot: "application/msword",
+  dotx: "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+  dotm: "application/vnd.ms-word.template.macroEnabled.12",
   ppt: "application/vnd.ms-powerpoint",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  pptm: "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
+  pps: "application/vnd.ms-powerpoint",
+  ppsx: "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+  ppsm: "application/vnd.ms-powerpoint.slideshow.macroEnabled.12",
+  pot: "application/vnd.ms-powerpoint",
+  potx: "application/vnd.openxmlformats-officedocument.presentationml.template",
+  potm: "application/vnd.ms-powerpoint.template.macroEnabled.12",
   xls: "application/vnd.ms-excel",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
+  xlsb: "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+  xlt: "application/vnd.ms-excel",
+  xltx: "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+  xltm: "application/vnd.ms-excel.template.macroEnabled.12",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
+  gif: "image/gif",
+  avif: "image/avif",
+  svg: "image/svg+xml",
+  bmp: "image/bmp",
 };
 
 const CONTENT_TYPES_BY_RESOURCE_TYPE = {
@@ -74,10 +95,44 @@ const fetchResourceBuffer = async (resource) => {
   };
 };
 
+const uploadBufferToCloudinary = ({ buffer, fileType, originalName }) =>
+  new Promise((resolve, reject) => {
+    const resourceType = fileType === "IMAGE" ? "image" : "raw";
+    const extension = (originalName || "").split(".").pop()?.toLowerCase();
+    const baseName = (originalName || "resource")
+      .replace(/\.[^.]+$/, "")
+      .replace(/[^a-z0-9_-]+/gi, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 60) || "resource";
+    const publicId =
+      resourceType === "raw" && extension
+        ? `campus-resources/${baseName}-${Date.now()}.${extension}`
+        : undefined;
+    const uploadOptions = {
+      resource_type: resourceType,
+      timeout: 60000,
+      ...(publicId
+        ? { public_id: publicId }
+        : { folder: "campus-resources" }),
+    };
+    const uploadStream = cloudinary.uploader.upload_stream(
+      uploadOptions,
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    );
+
+    Readable.from(buffer).pipe(uploadStream);
+  });
+
 // @desc    Upload a new resource
 // @route   POST /api/resources
 // @access  Private
 exports.uploadResource = async (req, res) => {
+  let uploadedPublicId = "";
+  let uploadedResourceType = "";
+
   try {
     const { title, description, course, department, semester } = req.body;
 
@@ -94,9 +149,26 @@ exports.uploadResource = async (req, res) => {
       "application/pdf": "PDF",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
         "DOCX",
+      "application/vnd.ms-word.document.macroEnabled.12": "DOCX",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.template":
+        "DOCX",
+      "application/vnd.ms-word.template.macroEnabled.12": "DOCX",
       "application/vnd.openxmlformats-officedocument.presentationml.presentation":
         "PPTX",
+      "application/vnd.ms-powerpoint.presentation.macroEnabled.12": "PPTX",
+      "application/vnd.openxmlformats-officedocument.presentationml.slideshow":
+        "PPTX",
+      "application/vnd.ms-powerpoint.slideshow.macroEnabled.12": "PPTX",
+      "application/vnd.openxmlformats-officedocument.presentationml.template":
+        "PPTX",
+      "application/vnd.ms-powerpoint.template.macroEnabled.12": "PPTX",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+        "XLSX",
+      "application/vnd.ms-excel": "XLSX",
+      "application/vnd.ms-excel.sheet.macroEnabled.12": "XLSX",
+      "application/vnd.ms-excel.sheet.binary.macroEnabled.12": "XLSX",
+      "application/vnd.ms-excel.template.macroEnabled.12": "XLSX",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.template":
         "XLSX",
       "application/msword": "DOCX",
       "application/vnd.ms-powerpoint": "PPTX",
@@ -104,9 +176,59 @@ exports.uploadResource = async (req, res) => {
       "image/jpg": "IMAGE",
       "image/png": "IMAGE",
       "image/webp": "IMAGE",
+      "image/gif": "IMAGE",
+      "image/avif": "IMAGE",
+      "image/svg+xml": "IMAGE",
+      "image/bmp": "IMAGE",
     };
 
-    const fileType = fileTypeMap[req.file.mimetype] || "PDF";
+    const extension = (req.file.originalname || "")
+      .split(".")
+      .pop()
+      .toLowerCase();
+    const fileTypeByExtension = {
+      pdf: "PDF",
+      doc: "DOCX",
+      docx: "DOCX",
+      docm: "DOCX",
+      dot: "DOCX",
+      dotx: "DOCX",
+      dotm: "DOCX",
+      ppt: "PPTX",
+      pptx: "PPTX",
+      pptm: "PPTX",
+      pps: "PPTX",
+      ppsx: "PPTX",
+      ppsm: "PPTX",
+      pot: "PPTX",
+      potx: "PPTX",
+      potm: "PPTX",
+      xls: "XLSX",
+      xlsx: "XLSX",
+      xlsm: "XLSX",
+      xlsb: "XLSX",
+      xlt: "XLSX",
+      xltx: "XLSX",
+      xltm: "XLSX",
+      jpg: "IMAGE",
+      jpeg: "IMAGE",
+      png: "IMAGE",
+      webp: "IMAGE",
+      gif: "IMAGE",
+      avif: "IMAGE",
+      svg: "IMAGE",
+      bmp: "IMAGE",
+    };
+
+    const fileType =
+      fileTypeMap[req.file.mimetype] || fileTypeByExtension[extension] || "PDF";
+    const uploadResult = await uploadBufferToCloudinary({
+      buffer: req.file.buffer,
+      fileType,
+      originalName: req.file.originalname,
+    });
+    uploadedPublicId = uploadResult.public_id;
+    uploadedResourceType = uploadResult.resource_type;
 
     // Create resource
     const resource = await Resource.create({
@@ -115,13 +237,11 @@ exports.uploadResource = async (req, res) => {
       course,
       department,
       semester,
-      fileUrl: req.file.path,
+      fileUrl: uploadResult.secure_url,
       fileType,
-      fileSize: req.file.size,
-      cloudinaryPublicId: req.file.filename,
-      cloudinaryResourceType: req.file.mimetype.startsWith("image/")
-        ? "image"
-        : "raw",
+      fileSize: uploadResult.bytes || req.file.size,
+      cloudinaryPublicId: uploadResult.public_id,
+      cloudinaryResourceType: uploadResult.resource_type,
       uploadedBy: req.user._id,
       approved: true,
       approvedBy: req.user._id,
@@ -140,10 +260,10 @@ exports.uploadResource = async (req, res) => {
     console.error("Upload resource error:", error);
 
     // Delete uploaded file from Cloudinary if resource creation fails
-    if (req.file && req.file.filename) {
+    if (uploadedPublicId) {
       try {
-        await cloudinary.uploader.destroy(req.file.filename, {
-          resource_type: req.file.mimetype?.startsWith("image/") ? "image" : "raw",
+        await cloudinary.uploader.destroy(uploadedPublicId, {
+          resource_type: uploadedResourceType || "raw",
         });
       } catch (deleteError) {
         console.error("Error deleting file from Cloudinary:", deleteError);
@@ -535,8 +655,8 @@ exports.streamResourceFile = async (req, res) => {
     const { format, upstreamContentType, fileBuffer } =
       await fetchResourceBuffer(resource);
     const contentType =
-      CONTENT_TYPES_BY_RESOURCE_TYPE[resource.fileType] ||
       CONTENT_TYPES_BY_FORMAT[format] ||
+      CONTENT_TYPES_BY_RESOURCE_TYPE[resource.fileType] ||
       upstreamContentType ||
       "application/octet-stream";
     const wantsDownload =
