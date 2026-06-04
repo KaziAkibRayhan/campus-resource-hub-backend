@@ -27,6 +27,8 @@ const allowedMimeTypes = [
   "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
   "image/jpeg",
   "image/jpg",
+  "image/pjpeg",
+  "image/x-citrix-jpeg",
   "image/png",
   "image/webp",
   "image/gif",
@@ -42,6 +44,8 @@ const allowedMimeTypes = [
 const fileSizeLimits = {
   "image/jpeg": 10 * 1024 * 1024, // 10MB for images
   "image/jpg": 10 * 1024 * 1024,
+  "image/pjpeg": 10 * 1024 * 1024,
+  "image/x-citrix-jpeg": 10 * 1024 * 1024,
   "image/png": 10 * 1024 * 1024,
   "image/webp": 10 * 1024 * 1024,
   "image/gif": 10 * 1024 * 1024,
@@ -144,6 +148,8 @@ const fileFilter = (req, file, cb) => {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.template": [".xltx"],
     "image/jpeg": [".jpg", ".jpeg"],
     "image/jpg": [".jpg", ".jpeg"],
+    "image/pjpeg": [".jpg", ".jpeg"],
+    "image/x-citrix-jpeg": [".jpg", ".jpeg"],
     "image/png": [".png"],
     "image/webp": [".webp"],
     "image/gif": [".gif"],
@@ -214,7 +220,7 @@ const chatAttachmentStorage = new CloudinaryStorage({
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 20 * 1024 * 1024, // 20MB default
+    fileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 25 * 1024 * 1024, // 25MB default
   },
   fileFilter: fileFilter,
 });
@@ -263,7 +269,7 @@ const handleUploadError = (err, req, res, next) => {
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
         success: false,
-        message: "File size too large. Maximum size is 20MB.",
+        message: "File size too large. Maximum size is 25MB.",
       });
     }
     return res.status(400).json({

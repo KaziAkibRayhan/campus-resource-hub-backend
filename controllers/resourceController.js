@@ -115,15 +115,31 @@ const uploadBufferToCloudinary = ({ buffer, fileType, originalName }) =>
         ? { public_id: publicId }
         : { folder: "campus-resources" }),
     };
-    const uploadStream = cloudinary.uploader.upload_stream(
+    let settled = false;
+    let uploadStream;
+    const finish = (handler, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(uploadTimeout);
+      handler(value);
+    };
+    const uploadTimeout = setTimeout(() => {
+      uploadStream?.destroy(new Error("File upload timed out. Please try again."));
+      finish(reject, new Error("File upload timed out. Please try again."));
+    }, 70000);
+
+    uploadStream = cloudinary.uploader.upload_stream(
       uploadOptions,
       (error, result) => {
-        if (error) return reject(error);
-        resolve(result);
+        if (error) return finish(reject, error);
+        finish(resolve, result);
       }
     );
 
-    Readable.from(buffer).pipe(uploadStream);
+    uploadStream.on("error", (error) => finish(reject, error));
+    Readable.from(buffer)
+      .on("error", (error) => finish(reject, error))
+      .pipe(uploadStream);
   });
 
 // @desc    Upload a new resource
@@ -174,6 +190,8 @@ exports.uploadResource = async (req, res) => {
       "application/vnd.ms-powerpoint": "PPTX",
       "image/jpeg": "IMAGE",
       "image/jpg": "IMAGE",
+      "image/pjpeg": "IMAGE",
+      "image/x-citrix-jpeg": "IMAGE",
       "image/png": "IMAGE",
       "image/webp": "IMAGE",
       "image/gif": "IMAGE",
