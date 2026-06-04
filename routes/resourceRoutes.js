@@ -11,6 +11,7 @@ const {
   rejectResource,
   incrementDownload,
   getMyUploads,
+  streamResourceFile,
 } = require("../controllers/resourceController");
 const {
   protect,
@@ -60,6 +61,7 @@ router.put("/:id", protect, updateResource);
 router.delete("/:id", protect, deleteResource);
 router.put("/:id/download", protect, incrementDownload);
 
+router.get("/:id/file", streamResourceFile);
 router.get("/:id", optionalProtect, getResourceById);
 
 // Admin/Moderator only routes

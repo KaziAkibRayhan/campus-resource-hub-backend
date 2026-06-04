@@ -4,6 +4,28 @@ const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
 const { sendNotification } = require("../utils/notificationHelper");
 
+const CONTENT_TYPES_BY_FORMAT = {
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+};
+
+const CONTENT_TYPES_BY_RESOURCE_TYPE = {
+  PDF: "application/pdf",
+  DOCX: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  PPTX: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  XLSX: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  IMAGE: null,
+};
+
 // @desc    Upload a new resource
 // @route   POST /api/resources
 // @access  Private
@@ -444,6 +466,108 @@ exports.rejectResource = async (req, res) => {
 // @desc    Increment download count
 // @route   PUT /api/resources/:id/download
 // @access  Private
+// @desc    Stream a resource file through the server (inline preview or download)
+// @route   GET /api/resources/:id/file
+// @access  Public
+// @note    Cloudinary blocks public delivery of PDF/raw files by default
+//          (401 "deny or ACL failure"). We fetch the asset with a signed,
+//          authenticated download URL on the server and re-stream it so that
+//          preview & download work regardless of that account setting.
+exports.streamResourceFile = async (req, res) => {
+  try {
+    const resource = await Resource.findById(req.params.id).lean();
+
+    if (!resource) {
+      return res.status(404).json({
+        success: false,
+        message: "Resource not found",
+      });
+    }
+
+    // Derive the cloudinary delivery type & file format from the stored URL.
+    const isRaw = /\/raw\/upload\//.test(resource.fileUrl || "");
+    const isImage = /\/image\/upload\//.test(resource.fileUrl || "");
+    const deliveryType = isImage
+      ? "image"
+      : isRaw
+      ? "raw"
+      : resource.cloudinaryResourceType || "raw";
+    const format = (resource.fileUrl || "")
+      .split(".")
+      .pop()
+      .split("?")[0]
+      .toLowerCase();
+
+    // Build a signed, authenticated download URL that bypasses the public
+    // delivery restriction, then proxy the bytes back to the client.
+    const deliveryTypesToTry = [
+      deliveryType,
+      deliveryType === "image" ? "raw" : "image",
+    ];
+    let upstream;
+
+    for (const resourceType of deliveryTypesToTry) {
+      const signedUrl = cloudinary.utils.private_download_url(
+        resource.cloudinaryPublicId,
+        format,
+        { resource_type: resourceType, type: "upload" }
+      );
+
+      upstream = await fetch(signedUrl);
+      if (upstream.ok) break;
+    }
+
+    if (!upstream?.ok) {
+      return res.status(502).json({
+        success: false,
+        message: "Unable to fetch file from storage",
+      });
+    }
+
+    const upstreamContentType = upstream.headers.get("content-type");
+    const contentType =
+      CONTENT_TYPES_BY_RESOURCE_TYPE[resource.fileType] ||
+      CONTENT_TYPES_BY_FORMAT[format] ||
+      upstreamContentType ||
+      "application/octet-stream";
+    const wantsDownload =
+      req.query.download === "1" || req.query.download === "true";
+
+    const safeName = `${(resource.title || "resource").replace(
+      /[^a-z0-9._-]+/gi,
+      "_"
+    )}.${format}`;
+    const arrayBuffer = await upstream.arrayBuffer();
+    const fileBuffer = Buffer.from(arrayBuffer);
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `${wantsDownload ? "attachment" : "inline"}; filename="${safeName}"`
+    );
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Content-Length", fileBuffer.length);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+
+    // Allow this file to be embedded in an <iframe> from the frontend origin.
+    // Helmet's global defaults (X-Frame-Options: SAMEORIGIN and CSP
+    // frame-ancestors 'self') would otherwise block the cross-origin preview.
+    res.removeHeader("X-Frame-Options");
+    res.removeHeader("Content-Security-Policy");
+    res.setHeader("Content-Security-Policy", "frame-ancestors *");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+
+    return res.send(fileBuffer);
+  } catch (error) {
+    console.error("Stream resource file error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error streaming file",
+    });
+  }
+};
+
 exports.incrementDownload = async (req, res) => {
   try {
     const resource = await Resource.findById(req.params.id);
