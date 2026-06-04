@@ -549,6 +549,10 @@ exports.streamResourceFile = async (req, res) => {
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Content-Length", fileBuffer.length);
     res.setHeader("Cache-Control", "public, max-age=3600");
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "Accept-Ranges, Content-Length, Content-Range, Content-Disposition, Content-Type"
+    );
 
     // Allow this file to be embedded in an <iframe> from the frontend origin.
     // Helmet's global defaults (X-Frame-Options: SAMEORIGIN and CSP
