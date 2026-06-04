@@ -619,6 +619,7 @@ exports.previewResourceHtml = async (req, res) => {
         background: #f8fafc;
         color: #111827;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 16px;
         line-height: 1.65;
       }
       main {
@@ -635,8 +636,8 @@ exports.previewResourceHtml = async (req, res) => {
       td, th { border: 1px solid #cbd5e1; padding: 8px; }
       img { max-width: 100%; height: auto; }
       @media (max-width: 640px) {
-        body { padding: 12px; }
-        main { padding: 22px; }
+        body { padding: 10px; font-size: 14px; }
+        main { padding: 18px; }
       }
     </style>
   </head>
