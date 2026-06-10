@@ -134,7 +134,7 @@ const initializeSocket = (io) => {
               message: notificationMessage,
               type: conversation.type === "group" ? "group_message" : "message",
               sender: socket.user._id,
-              link: "/dashboard", // Or wherever chat is
+              link: "/messages",
               metadata: { conversationId: conversation._id }
             });
           }

@@ -78,3 +78,23 @@ exports.deleteNotification = async (req, res) => {
     res.status(500).json({ success: false, message: "Error deleting notification" });
   }
 };
+
+// Clear notifications for the current user. ?read=true clears only already-read
+// ones; otherwise clears all of them.
+exports.clearNotifications = async (req, res) => {
+  try {
+    const filter = { user: req.user._id };
+    if (String(req.query.read) === "true") filter.read = true;
+
+    const result = await Notification.deleteMany(filter);
+
+    res.status(200).json({
+      success: true,
+      message: "Notifications cleared",
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error("Clear notifications error:", error);
+    res.status(500).json({ success: false, message: "Error clearing notifications" });
+  }
+};

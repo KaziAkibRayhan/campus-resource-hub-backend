@@ -1,4 +1,11 @@
 // backend/server.js
+const dns = require("dns");
+// Some hosts (e.g. Render) have no outbound IPv6 route. When DNS returns an
+// AAAA (IPv6) record first, outbound connections to Gmail SMTP / Mongo Atlas /
+// Cloudinary etc. fail with "connect ENETUNREACH <ipv6>". Prefer IPv4 to avoid
+// this. Must run before any network connection is made.
+dns.setDefaultResultOrder("ipv4first");
+
 const express = require("express");
 const http = require("http");
 const dotenv = require("dotenv");

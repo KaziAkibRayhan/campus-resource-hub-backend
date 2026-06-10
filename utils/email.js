@@ -15,6 +15,9 @@ const getTransporter = () => {
     host: SMTP_HOST,
     port: Number(SMTP_PORT) || 587,
     secure: String(SMTP_PORT) === "465",
+    // Force IPv4: hosts without an outbound IPv6 route (e.g. Render) otherwise
+    // fail with "connect ENETUNREACH <ipv6>" when DNS returns an IPv6 address.
+    family: 4,
     auth: {
       user: SMTP_USER,
       pass: SMTP_PASS,
