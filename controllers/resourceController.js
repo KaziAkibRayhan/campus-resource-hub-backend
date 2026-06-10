@@ -5,6 +5,11 @@ const cloudinary = require("../config/cloudinary");
 const { sendNotification } = require("../utils/notificationHelper");
 const mammoth = require("mammoth");
 const { Readable } = require("stream");
+const { extractContent } = require("../utils/contentExtractor");
+const {
+  moderateContent,
+  describeCategories,
+} = require("../utils/moderationService");
 
 const CONTENT_TYPES_BY_FORMAT = {
   pdf: "application/pdf",
@@ -148,6 +153,7 @@ const uploadBufferToCloudinary = ({ buffer, fileType, originalName }) =>
 exports.uploadResource = async (req, res) => {
   let uploadedPublicId = "";
   let uploadedResourceType = "";
+  let createdResourceId = null;
 
   try {
     const { title, description, course, department, semester } = req.body;
@@ -240,6 +246,40 @@ exports.uploadResource = async (req, res) => {
 
     const fileType =
       fileTypeMap[req.file.mimetype] || fileTypeByExtension[extension] || "PDF";
+
+    // Content safety check BEFORE anything is stored: look inside the file
+    // (text, images, PDF pages) and reject harmful uploads with a warning.
+    const extraction = await extractContent(req.file, fileType);
+    const verdict = await moderateContent({
+      texts: [
+        [title, description, course].filter(Boolean).join("\n"),
+        ...extraction.texts,
+      ],
+      images: extraction.images,
+    });
+
+    if (verdict.flagged) {
+      return res.status(422).json({
+        success: false,
+        code: "CONTENT_REJECTED",
+        message: `Upload blocked: this file appears to contain ${describeCategories(
+          verdict.categories
+        )}. It violates community guidelines and was not uploaded.`,
+        categories: verdict.categories,
+      });
+    }
+
+    const moderation = {
+      status:
+        verdict.status === "checked"
+          ? extraction.partial
+            ? "partial"
+            : "approved"
+          : "skipped",
+      provider: verdict.provider || undefined,
+      checkedAt: new Date(),
+    };
+
     const uploadResult = await uploadBufferToCloudinary({
       buffer: req.file.buffer,
       fileType,
@@ -261,10 +301,12 @@ exports.uploadResource = async (req, res) => {
       cloudinaryPublicId: uploadResult.public_id,
       cloudinaryResourceType: uploadResult.resource_type,
       uploadedBy: req.user._id,
+      moderation,
       approved: true,
       approvedBy: req.user._id,
       approvedAt: Date.now(),
     });
+    createdResourceId = resource._id;
 
     // Populate uploader info
     await resource.populate("uploadedBy", "name email studentId");
@@ -285,6 +327,16 @@ exports.uploadResource = async (req, res) => {
         });
       } catch (deleteError) {
         console.error("Error deleting file from Cloudinary:", deleteError);
+      }
+    }
+
+    // Remove the document too if it was created before the failure,
+    // otherwise it would point at the file deleted above
+    if (createdResourceId) {
+      try {
+        await Resource.deleteOne({ _id: createdResourceId });
+      } catch (deleteError) {
+        console.error("Error deleting orphaned resource doc:", deleteError);
       }
     }
 
@@ -478,6 +530,20 @@ exports.updateResource = async (req, res) => {
     }
 
     const { title, description, course, department, semester } = req.body;
+
+    const verdict = await moderateContent({
+      texts: [[title, description, course].filter(Boolean).join("\n")],
+    });
+    if (verdict.flagged) {
+      return res.status(422).json({
+        success: false,
+        code: "CONTENT_REJECTED",
+        message: `Update blocked: the new text appears to contain ${describeCategories(
+          verdict.categories
+        )}. It violates community guidelines.`,
+        categories: verdict.categories,
+      });
+    }
 
     resource = await Resource.findByIdAndUpdate(
       req.params.id,

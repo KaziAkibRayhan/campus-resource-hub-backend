@@ -72,6 +72,19 @@ const resourceSchema = new mongoose.Schema(
     rejectionReason: {
       type: String,
     },
+    // Automated content-safety check result.
+    // "approved": fully scanned and clean; "partial": clean but some content
+    // could not be scanned (legacy formats, undecodable images);
+    // "skipped": no moderation provider was reachable — needs admin review.
+    moderation: {
+      status: {
+        type: String,
+        enum: ["approved", "partial", "skipped"],
+        default: "skipped",
+      },
+      provider: String,
+      checkedAt: Date,
+    },
     downloads: {
       type: Number,
       default: 0,
