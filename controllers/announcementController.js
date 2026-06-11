@@ -2,7 +2,7 @@ const { Readable } = require("stream");
 const Announcement = require("../models/Announcement");
 const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
-const { broadcastNotification } = require("../utils/notificationHelper");
+const { sendNotification, broadcastNotification } = require("../utils/notificationHelper");
 
 const attachmentFileTypeMap = {
   "application/pdf": "PDF",
@@ -154,7 +154,7 @@ exports.createAnnouncement = async (req, res) => {
       message: `${announcement.title}${announcement.department && announcement.department !== "All" ? ` (${announcement.department})` : ""}`,
       type: "announcement",
       sender: req.user._id,
-      link: "/announcements",
+      link: `/announcements?highlight=${announcement._id}`,
       metadata: { announcementId: announcement._id },
     });
     req.io?.emit("announcement:new", announcement);
@@ -234,12 +234,23 @@ exports.approveAnnouncement = async (req, res) => {
     announcement.rejectionReason = "";
     await announcement.save();
 
-    await Notification.create({
+    await sendNotification(req.io, {
       user: announcement.postedBy,
       title: "Announcement approved",
       message: `"${announcement.title}" is now visible.`,
       type: "announcement",
+      link: `/announcements?highlight=${announcement._id}`,
     });
+
+    broadcastNotification(req.io, {
+      excludeUser: announcement.postedBy,
+      title: "New announcement",
+      message: `${announcement.title}${announcement.department && announcement.department !== "All" ? ` (${announcement.department})` : ""}`,
+      type: "announcement",
+      link: `/announcements?highlight=${announcement._id}`,
+      metadata: { announcementId: announcement._id },
+    });
+    req.io?.emit("announcement:new", announcement);
 
     res.status(200).json({
       success: true,
@@ -272,11 +283,12 @@ exports.rejectAnnouncement = async (req, res) => {
     announcement.rejectionReason = req.body.reason || "Does not meet posting standards";
     await announcement.save();
 
-    await Notification.create({
+    await sendNotification(req.io, {
       user: announcement.postedBy,
       title: "Announcement rejected",
       message: `"${announcement.title}" needs revision. Reason: ${announcement.rejectionReason}`,
       type: "announcement",
+      link: "/announcements",
     });
 
     res.status(200).json({

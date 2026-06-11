@@ -1,7 +1,7 @@
 const LostFoundItem = require("../models/LostFoundItem");
 const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
-const { broadcastNotification } = require("../utils/notificationHelper");
+const { sendNotification, broadcastNotification } = require("../utils/notificationHelper");
 
 const statusLabels = {
   open: "open again",
@@ -30,6 +30,17 @@ exports.createItem = async (req, res) => {
     });
 
     await lostFoundItem.populate("postedBy", "name email studentId");
+
+    broadcastNotification(req.io, {
+      excludeUser: req.user._id,
+      title: `${lostFoundItem.type === "lost" ? "Lost" : "Found"} item posted`,
+      message: `${req.user.name} posted "${lostFoundItem.item}" (${lostFoundItem.type}) — ${lostFoundItem.location}.`,
+      type: "lost-found",
+      sender: req.user._id,
+      link: `/lost-found?highlight=${lostFoundItem._id}`,
+      metadata: { itemId: lostFoundItem._id },
+    });
+    req.io?.emit("lostfound:new", lostFoundItem);
 
     res.status(201).json({
       success: true,
@@ -146,7 +157,7 @@ exports.updateItem = async (req, res) => {
         message: `"${item.item}" (${item.type}) is now ${statusLabels[item.status] || item.status}.`,
         type: "lost-found",
         sender: req.user._id,
-        link: "/lost-found",
+        link: `/lost-found?highlight=${item._id}`,
         metadata: { itemId: item._id, status: item.status },
       });
     }
@@ -210,12 +221,14 @@ exports.approveItem = async (req, res) => {
     item.rejectionReason = "";
     await item.save();
 
-    await Notification.create({
+    await sendNotification(req.io, {
       user: item.postedBy,
       title: "Lost & Found item approved",
       message: `"${item.item}" is now visible on Lost & Found.`,
       type: "lost-found",
+      link: `/lost-found?highlight=${item._id}`,
     });
+    req.io?.emit("lostfound:updated", item);
 
     res.status(200).json({ success: true, message: "Item approved", item });
   } catch (error) {
@@ -236,11 +249,12 @@ exports.rejectItem = async (req, res) => {
     item.rejectionReason = req.body.reason || "Does not meet posting standards";
     await item.save();
 
-    await Notification.create({
+    await sendNotification(req.io, {
       user: item.postedBy,
       title: "Lost & Found item rejected",
       message: `"${item.item}" needs revision. Reason: ${item.rejectionReason}`,
       type: "lost-found",
+      link: "/lost-found",
     });
 
     res.status(200).json({ success: true, message: "Item rejected", item });

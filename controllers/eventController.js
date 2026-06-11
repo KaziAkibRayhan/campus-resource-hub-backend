@@ -1,6 +1,6 @@
 const Event = require("../models/Event");
 const Notification = require("../models/Notification");
-const { broadcastNotification } = require("../utils/notificationHelper");
+const { sendNotification, broadcastNotification } = require("../utils/notificationHelper");
 
 // @desc    Get all events
 // @route   GET /api/events
@@ -86,7 +86,7 @@ exports.registerEvent = async (req, res) => {
         message: `${req.user.name} registered for "${event.title}" — ${event.registrations.length} going.`,
         type: "event",
         sender: req.user._id,
-        link: "/events",
+        link: `/events?highlight=${event._id}`,
         metadata: { eventId: event._id },
       });
 
@@ -137,7 +137,7 @@ exports.createEvent = async (req, res) => {
       message: `"${event.title}" by ${event.club} — ${new Date(event.date).toLocaleDateString()} at ${event.location}.`,
       type: "event",
       sender: req.user._id,
-      link: "/events",
+      link: `/events?highlight=${event._id}`,
       metadata: { eventId: event._id },
     });
     req.io?.emit("event:new", event);
@@ -173,12 +173,23 @@ exports.approveEvent = async (req, res) => {
     event.rejectionReason = "";
     await event.save();
 
-    await Notification.create({
+    await sendNotification(req.io, {
       user: event.postedBy,
       title: "Event approved",
       message: `"${event.title}" is now visible.`,
       type: "event",
+      link: `/events?highlight=${event._id}`,
     });
+
+    broadcastNotification(req.io, {
+      excludeUser: event.postedBy,
+      title: "New event",
+      message: `"${event.title}" by ${event.club} — ${new Date(event.date).toLocaleDateString()} at ${event.location}.`,
+      type: "event",
+      link: `/events?highlight=${event._id}`,
+      metadata: { eventId: event._id },
+    });
+    req.io?.emit("event:new", event);
 
     res.status(200).json({
       success: true,
@@ -211,11 +222,12 @@ exports.rejectEvent = async (req, res) => {
     event.rejectionReason = req.body.reason || "Does not meet event standards";
     await event.save();
 
-    await Notification.create({
+    await sendNotification(req.io, {
       user: event.postedBy,
       title: "Event rejected",
       message: `"${event.title}" needs revision. Reason: ${event.rejectionReason}`,
       type: "event",
+      link: "/events",
     });
 
     res.status(200).json({

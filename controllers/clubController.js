@@ -55,6 +55,17 @@ exports.createClub = async (req, res) => {
       approved: true,
     });
 
+    broadcastNotification(req.io, {
+      excludeUser: req.user._id,
+      title: "New club",
+      message: `"${club.name}" (${club.category || "General"}) is now open — join from the Clubs page.`,
+      type: "system",
+      sender: req.user._id,
+      link: `/clubs?highlight=${club._id}`,
+      metadata: { clubId: club._id },
+    });
+    req.io?.emit("club:new", club);
+
     res.status(201).json({
       success: true,
       message: "Club created successfully",
@@ -91,7 +102,7 @@ exports.joinClub = async (req, res) => {
         message: `${req.user.name} joined "${club.name}" — ${club.members.length} members now.`,
         type: "system",
         sender: req.user._id,
-        link: "/clubs",
+        link: `/clubs?highlight=${club._id}`,
         metadata: { clubId: club._id },
       });
 

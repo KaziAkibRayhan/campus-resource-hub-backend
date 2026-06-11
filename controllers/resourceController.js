@@ -2,7 +2,7 @@
 const Resource = require("../models/Resource");
 const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
-const { sendNotification } = require("../utils/notificationHelper");
+const { sendNotification, broadcastNotification } = require("../utils/notificationHelper");
 const mammoth = require("mammoth");
 const { Readable } = require("stream");
 const { extractContent } = require("../utils/contentExtractor");
@@ -310,6 +310,17 @@ exports.uploadResource = async (req, res) => {
 
     // Populate uploader info
     await resource.populate("uploadedBy", "name email studentId");
+
+    broadcastNotification(req.io, {
+      excludeUser: req.user._id,
+      title: "New resource",
+      message: `${req.user.name} uploaded "${resource.title}" (${resource.course} · ${resource.department}).`,
+      type: "resource",
+      sender: req.user._id,
+      link: `/resources?highlight=${resource._id}`,
+      metadata: { resourceId: resource._id },
+    });
+    req.io?.emit("resource:new", resource);
 
     res.status(201).json({
       success: true,
@@ -652,7 +663,17 @@ exports.approveResource = async (req, res) => {
       title: "Resource Approved!",
       message: `Your resource "${resource.title}" has been approved and is now visible to everyone.`,
       type: "resource",
-      link: `/resources`,
+      link: `/resources?highlight=${resource._id}`,
+    });
+
+    broadcastNotification(req.io, {
+      excludeUser: resource.uploadedBy._id,
+      title: "New resource",
+      message: `"${resource.title}" (${resource.course} · ${resource.department}) is now available.`,
+      type: "resource",
+      sender: resource.uploadedBy._id,
+      link: `/resources?highlight=${resource._id}`,
+      metadata: { resourceId: resource._id },
     });
 
     res.status(200).json({
