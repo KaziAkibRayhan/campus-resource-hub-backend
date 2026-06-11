@@ -1,5 +1,6 @@
 const Event = require("../models/Event");
 const Notification = require("../models/Notification");
+const { broadcastNotification } = require("../utils/notificationHelper");
 
 // @desc    Get all events
 // @route   GET /api/events
@@ -78,6 +79,22 @@ exports.registerEvent = async (req, res) => {
     if (!alreadyRegistered) {
       event.registrations.push({ user: req.user._id });
       await event.save();
+
+      broadcastNotification(req.io, {
+        excludeUser: req.user._id,
+        title: "Event registration",
+        message: `${req.user.name} registered for "${event.title}" — ${event.registrations.length} going.`,
+        type: "event",
+        sender: req.user._id,
+        link: "/events",
+        metadata: { eventId: event._id },
+      });
+
+      // Live-update registration counts on open Events pages
+      req.io?.emit("event:updated", {
+        eventId: event._id,
+        registrationCount: event.registrations.length,
+      });
     }
 
     res.status(200).json({
@@ -113,6 +130,17 @@ exports.createEvent = async (req, res) => {
       approvedBy: req.user._id,
       approvedAt: Date.now(),
     });
+
+    broadcastNotification(req.io, {
+      excludeUser: req.user._id,
+      title: "New event",
+      message: `"${event.title}" by ${event.club} — ${new Date(event.date).toLocaleDateString()} at ${event.location}.`,
+      type: "event",
+      sender: req.user._id,
+      link: "/events",
+      metadata: { eventId: event._id },
+    });
+    req.io?.emit("event:new", event);
 
     res.status(201).json({
       success: true,

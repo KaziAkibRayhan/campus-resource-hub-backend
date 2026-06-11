@@ -1,4 +1,5 @@
 const Club = require("../models/Club");
+const { broadcastNotification } = require("../utils/notificationHelper");
 
 const canModerate = (user) => user && ["admin", "moderator"].includes(user.role);
 
@@ -83,6 +84,22 @@ exports.joinClub = async (req, res) => {
     if (!alreadyMember) {
       club.members.push({ user: req.user._id });
       await club.save();
+
+      broadcastNotification(req.io, {
+        excludeUser: req.user._id,
+        title: "New club member",
+        message: `${req.user.name} joined "${club.name}" — ${club.members.length} members now.`,
+        type: "system",
+        sender: req.user._id,
+        link: "/clubs",
+        metadata: { clubId: club._id },
+      });
+
+      // Live-update member counts on open Clubs pages
+      req.io?.emit("club:updated", {
+        clubId: club._id,
+        memberCount: club.members.length,
+      });
     }
 
     res.status(200).json({ success: true, message: "Joined club", club });
@@ -104,6 +121,11 @@ exports.leaveClub = async (req, res) => {
       (member) => member.user.toString() !== req.user._id.toString()
     );
     await club.save();
+
+    req.io?.emit("club:updated", {
+      clubId: club._id,
+      memberCount: club.members.length,
+    });
 
     res.status(200).json({ success: true, message: "Left club", club });
   } catch (error) {

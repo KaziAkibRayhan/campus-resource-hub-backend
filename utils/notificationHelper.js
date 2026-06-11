@@ -31,4 +31,41 @@ const sendNotification = async (io, data) => {
   }
 };
 
-module.exports = { sendNotification };
+/**
+ * Send the same notification to every active user (optionally excluding the actor).
+ * Inserts in bulk, then emits to each online user's personal room. Clients
+ * increment their own unread badge on "notification:new", so no per-user
+ * count query is needed here.
+ * @param {Object} io - Socket.io instance
+ * @param {Object} data - Same shape as sendNotification, minus `user`
+ * @param {string} [data.excludeUser] - User ID to skip (usually the actor)
+ */
+const broadcastNotification = async (io, { excludeUser, ...data }) => {
+  try {
+    const User = require("../models/User");
+    const userFilter = { isBlocked: false };
+    if (excludeUser) {
+      userFilter._id = { $ne: excludeUser };
+    }
+
+    const users = await User.find(userFilter).select("_id").lean();
+    if (users.length === 0) return [];
+
+    const notifications = await Notification.insertMany(
+      users.map(({ _id }) => ({ ...data, user: _id }))
+    );
+
+    if (io) {
+      notifications.forEach((notification) => {
+        io.to(`user:${notification.user}`).emit("notification:new", notification);
+      });
+    }
+
+    return notifications;
+  } catch (error) {
+    console.error("Broadcast notification error:", error);
+    return [];
+  }
+};
+
+module.exports = { sendNotification, broadcastNotification };

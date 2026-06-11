@@ -1,6 +1,13 @@
 const LostFoundItem = require("../models/LostFoundItem");
 const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
+const { broadcastNotification } = require("../utils/notificationHelper");
+
+const statusLabels = {
+  open: "open again",
+  claimed: "claimed",
+  resolved: "resolved",
+};
 
 const canModerate = (user) => user && ["admin", "moderator"].includes(user.role);
 
@@ -102,6 +109,7 @@ exports.updateItem = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized" });
     }
 
+    const previousStatus = item.status;
     const allowedFields = ["type", "item", "description", "location", "contact", "status"];
     allowedFields.forEach((field) => {
       if (req.body[field] !== undefined) item[field] = req.body[field];
@@ -128,6 +136,21 @@ exports.updateItem = async (req, res) => {
 
     await item.save();
     await item.populate("postedBy", "name email studentId");
+
+    // Status change is campus-wide news (e.g. a lost wallet got claimed) —
+    // notify everyone and refresh open Lost & Found pages live.
+    if (item.status !== previousStatus && item.approved) {
+      broadcastNotification(req.io, {
+        excludeUser: req.user._id,
+        title: `Lost & Found: ${item.item}`,
+        message: `"${item.item}" (${item.type}) is now ${statusLabels[item.status] || item.status}.`,
+        type: "lost-found",
+        sender: req.user._id,
+        link: "/lost-found",
+        metadata: { itemId: item._id, status: item.status },
+      });
+    }
+    req.io?.emit("lostfound:updated", item);
 
     res.status(200).json({
       success: true,

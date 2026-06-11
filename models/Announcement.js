@@ -37,6 +37,19 @@ const announcementSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    attachments: [
+      {
+        fileUrl: { type: String, required: true },
+        fileType: { type: String, default: "FILE" },
+        fileName: { type: String, default: "" },
+        fileSize: { type: Number, default: 0 },
+        mimeType: { type: String, default: "" },
+        publicId: { type: String, default: "" },
+        // Cloudinary resource_type ("image" | "raw") — needed for signed
+        // download URLs and asset cleanup on delete.
+        resourceType: { type: String, default: "raw" },
+      },
+    ],
   },
   {
     timestamps: true,
