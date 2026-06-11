@@ -4,6 +4,7 @@ const {
   getUsers,
   setUserBlocked,
   updateUserRole,
+  deleteUser,
 } = require("../controllers/adminController");
 const { protect, authorize } = require("../middleware/authMiddleware");
 
@@ -18,5 +19,6 @@ router.put(
   setUserBlocked
 );
 router.put("/users/:id/role", protect, authorize("admin"), updateUserRole);
+router.delete("/users/:id", protect, authorize("admin"), deleteUser);
 
 module.exports = router;

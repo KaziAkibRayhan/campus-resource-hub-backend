@@ -221,3 +221,40 @@ exports.setUserBlocked = async (req, res) => {
     });
   }
 };
+
+// @desc    Delete a user (Admin only)
+// @route   DELETE /api/admin/users/:id
+// @access  Private (Admin)
+exports.deleteUser = async (req, res) => {
+  try {
+    const targetUser = await User.findById(req.params.id);
+
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (targetUser._id.toString() === req.user._id.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot delete your own account",
+      });
+    }
+
+    if (targetUser.role === "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Admin accounts cannot be deleted. Change the role first.",
+      });
+    }
+
+    // Clean up the user's notifications; their posts stay (shown without author)
+    const Notification = require("../models/Notification");
+    await Notification.deleteMany({ user: targetUser._id });
+    await targetUser.deleteOne();
+
+    res.status(200).json({ success: true, message: "User deleted" });
+  } catch (error) {
+    console.error("Delete user error:", error);
+    res.status(500).json({ success: false, message: "Error deleting user" });
+  }
+};
