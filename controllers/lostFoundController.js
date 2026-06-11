@@ -2,6 +2,7 @@ const LostFoundItem = require("../models/LostFoundItem");
 const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
 const { sendNotification, broadcastNotification } = require("../utils/notificationHelper");
+const { moderatePost } = require("../utils/postModeration");
 
 const statusLabels = {
   open: "open again",
@@ -14,6 +15,26 @@ const canModerate = (user) => user && ["admin", "moderator"].includes(user.role)
 exports.createItem = async (req, res) => {
   try {
     const { type, item, description, location, contact } = req.body;
+
+    const rejection = await moderatePost({
+      texts: [item, description, location, contact],
+      imageUrls: req.file?.path ? [req.file.path] : [],
+    });
+    if (rejection) {
+      if (req.file?.filename) {
+        try {
+          await cloudinary.uploader.destroy(req.file.filename);
+        } catch (deleteError) {
+          console.error("Flagged lost found image cleanup error:", deleteError);
+        }
+      }
+      return res.status(422).json({
+        success: false,
+        code: "CONTENT_REJECTED",
+        message: rejection.message,
+        categories: rejection.categories,
+      });
+    }
 
     const lostFoundItem = await LostFoundItem.create({
       type,
@@ -118,6 +139,29 @@ exports.updateItem = async (req, res) => {
     const isOwner = item.postedBy.toString() === req.user._id.toString();
     if (!isOwner && !canModerate(req.user)) {
       return res.status(403).json({ success: false, message: "Not authorized" });
+    }
+
+    const { item: newItemName, description: newDescription, location: newLocation, contact: newContact } = req.body;
+    if (newItemName || newDescription || newLocation || newContact || req.file) {
+      const rejection = await moderatePost({
+        texts: [newItemName, newDescription, newLocation, newContact],
+        imageUrls: req.file?.path ? [req.file.path] : [],
+      });
+      if (rejection) {
+        if (req.file?.filename) {
+          try {
+            await cloudinary.uploader.destroy(req.file.filename);
+          } catch (deleteError) {
+            console.error("Flagged lost found image cleanup error:", deleteError);
+          }
+        }
+        return res.status(422).json({
+          success: false,
+          code: "CONTENT_REJECTED",
+          message: rejection.message,
+          categories: rejection.categories,
+        });
+      }
     }
 
     const previousStatus = item.status;

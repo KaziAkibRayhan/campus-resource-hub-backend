@@ -1,6 +1,7 @@
 const Event = require("../models/Event");
 const Notification = require("../models/Notification");
 const { sendNotification, broadcastNotification } = require("../utils/notificationHelper");
+const { moderatePost } = require("../utils/postModeration");
 
 // @desc    Get all events
 // @route   GET /api/events
@@ -117,6 +118,16 @@ exports.registerEvent = async (req, res) => {
 exports.createEvent = async (req, res) => {
   try {
     const { title, description, club, date, time, location } = req.body;
+
+    const rejection = await moderatePost({ texts: [title, description, club, location] });
+    if (rejection) {
+      return res.status(422).json({
+        success: false,
+        code: "CONTENT_REJECTED",
+        message: rejection.message,
+        categories: rejection.categories,
+      });
+    }
 
     const event = await Event.create({
       title,
@@ -259,6 +270,19 @@ exports.updateEvent = async (req, res) => {
       return res.status(401).json({ success: false, message: "Not authorized" });
     }
     const { title, description, club, date, time, location } = req.body;
+
+    if (title || description || club || location) {
+      const rejection = await moderatePost({ texts: [title, description, club, location] });
+      if (rejection) {
+        return res.status(422).json({
+          success: false,
+          code: "CONTENT_REJECTED",
+          message: rejection.message,
+          categories: rejection.categories,
+        });
+      }
+    }
+
     if (title)       event.title       = title;
     if (description) event.description = description;
     if (club)        event.club        = club;

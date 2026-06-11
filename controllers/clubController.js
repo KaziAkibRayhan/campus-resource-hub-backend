@@ -1,5 +1,6 @@
 const Club = require("../models/Club");
 const { broadcastNotification } = require("../utils/notificationHelper");
+const { moderatePost } = require("../utils/postModeration");
 
 const canModerate = (user) => user && ["admin", "moderator"].includes(user.role);
 
@@ -44,6 +45,16 @@ exports.getClubs = async (req, res) => {
 exports.createClub = async (req, res) => {
   try {
     const { name, description, category } = req.body;
+
+    const rejection = await moderatePost({ texts: [name, description, category] });
+    if (rejection) {
+      return res.status(422).json({
+        success: false,
+        code: "CONTENT_REJECTED",
+        message: rejection.message,
+        categories: rejection.categories,
+      });
+    }
 
     const club = await Club.create({
       name,

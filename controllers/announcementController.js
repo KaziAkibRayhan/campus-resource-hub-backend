@@ -3,6 +3,7 @@ const Announcement = require("../models/Announcement");
 const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
 const { sendNotification, broadcastNotification } = require("../utils/notificationHelper");
+const { moderatePost } = require("../utils/postModeration");
 
 const attachmentFileTypeMap = {
   "application/pdf": "PDF",
@@ -129,6 +130,17 @@ exports.createAnnouncement = async (req, res) => {
   let attachments = [];
   try {
     const { title, content, department } = req.body;
+
+    // Safety scan BEFORE anything is stored — text + inside attachments
+    const rejection = await moderatePost({ texts: [title, content], files: req.files || [] });
+    if (rejection) {
+      return res.status(422).json({
+        success: false,
+        code: "CONTENT_REJECTED",
+        message: rejection.message,
+        categories: rejection.categories,
+      });
+    }
 
     if (req.files?.length) {
       attachments = await Promise.all(req.files.map(uploadAttachmentBuffer));
@@ -320,6 +332,19 @@ exports.updateAnnouncement = async (req, res) => {
       return res.status(401).json({ success: false, message: "Not authorized" });
     }
     const { title, content, department, removeAttachments } = req.body;
+
+    if (title || content || req.files?.length) {
+      const rejection = await moderatePost({ texts: [title, content], files: req.files || [] });
+      if (rejection) {
+        return res.status(422).json({
+          success: false,
+          code: "CONTENT_REJECTED",
+          message: rejection.message,
+          categories: rejection.categories,
+        });
+      }
+    }
+
     if (title)      announcement.title      = title;
     if (content)    announcement.content    = content;
     if (department) announcement.department = department;
