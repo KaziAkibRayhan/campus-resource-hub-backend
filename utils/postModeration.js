@@ -97,7 +97,9 @@ const extractorFileType = (file = {}) => {
  * @returns {Promise<null | { message: string, categories: string[] }>}
  *          null when clean; rejection payload when flagged
  */
-const moderatePost = async ({ texts = [], files = [], imageUrls = [] } = {}) => {
+// Gather all the moderatable signal (text fields + extracted file content +
+// hosted image URLs) into the shape moderateContent expects.
+const collectContent = async ({ texts = [], files = [], imageUrls = [] }) => {
   const collectedTexts = texts.filter((text) => text && String(text).trim());
   const collectedImages = imageUrls
     .filter(Boolean)
@@ -117,7 +119,24 @@ const moderatePost = async ({ texts = [], files = [], imageUrls = [] } = {}) => 
     }
   }
 
-  const verdict = await moderateContent({ texts: collectedTexts, images: collectedImages });
+  return { texts: collectedTexts, images: collectedImages };
+};
+
+const isCsamVerdict = (verdict) =>
+  verdict.flagged && verdict.categories.some((c) => /minor/i.test(c));
+
+/**
+ * Hard-block gate. Used by announcements/events/clubs (staff-created): flagged
+ * content is rejected outright and never stored.
+ *
+ * Fails open: if the moderation provider is unavailable the post is allowed.
+ *
+ * @returns {Promise<null | { message: string, categories: string[] }>}
+ *          null when clean; rejection payload when flagged
+ */
+const moderatePost = async (options = {}) => {
+  const { texts, images } = await collectContent(options);
+  const verdict = await moderateContent({ texts, images });
 
   if (verdict.flagged) {
     return {
@@ -131,4 +150,32 @@ const moderatePost = async ({ texts = [], files = [], imageUrls = [] } = {}) => 
   return null;
 };
 
-module.exports = { moderatePost };
+/**
+ * Review gate. Used by student-posted Lost & Found: returns the raw verdict so
+ * the caller can hold flagged (or unscannable) content for admin/moderator
+ * review instead of hard-blocking — while still hard-blocking CSAM.
+ *
+ * @returns {Promise<{
+ *   flagged: boolean,        // policy violation detected
+ *   isCSAM: boolean,         // sexual content involving minors — always reject
+ *   categories: string[],    // human-readable category labels
+ *   status: "checked"|"unavailable",
+ *   provider: string|null,
+ *   describe: string,        // human phrase for the categories
+ * }>}
+ */
+const screenPost = async (options = {}) => {
+  const { texts, images } = await collectContent(options);
+  const verdict = await moderateContent({ texts, images });
+
+  return {
+    flagged: verdict.flagged,
+    isCSAM: isCsamVerdict(verdict),
+    categories: verdict.categories,
+    status: verdict.status,
+    provider: verdict.provider,
+    describe: describeCategories(verdict.categories),
+  };
+};
+
+module.exports = { moderatePost, screenPost };

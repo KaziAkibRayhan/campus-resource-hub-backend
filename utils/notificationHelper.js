@@ -39,11 +39,13 @@ const sendNotification = async (io, data) => {
  * @param {Object} io - Socket.io instance
  * @param {Object} data - Same shape as sendNotification, minus `user`
  * @param {string} [data.excludeUser] - User ID to skip (usually the actor)
+ * @param {Object} [data.audience] - Extra User query to target a subset
+ *        (e.g. { department: { $in: ["CSE", "All"] } }). Omit to reach everyone.
  */
-const broadcastNotification = async (io, { excludeUser, ...data }) => {
+const broadcastNotification = async (io, { excludeUser, audience, ...data }) => {
   try {
     const User = require("../models/User");
-    const userFilter = { isBlocked: false };
+    const userFilter = { isBlocked: false, ...(audience || {}) };
     if (excludeUser) {
       userFilter._id = { $ne: excludeUser };
     }
@@ -68,4 +70,42 @@ const broadcastNotification = async (io, { excludeUser, ...data }) => {
   }
 };
 
-module.exports = { sendNotification, broadcastNotification };
+/**
+ * Send the same notification to every admin/moderator (e.g. when content is
+ * flagged and needs review). Skips blocked users and the actor.
+ * @param {Object} io - Socket.io instance
+ * @param {Object} data - Same shape as sendNotification, minus `user`
+ * @param {string} [data.sender] - Actor user ID, excluded from recipients
+ */
+const notifyModerators = async (io, { sender, ...data } = {}) => {
+  try {
+    const User = require("../models/User");
+    const userFilter = {
+      isBlocked: false,
+      role: { $in: ["admin", "moderator"] },
+    };
+    if (sender) {
+      userFilter._id = { $ne: sender };
+    }
+
+    const moderators = await User.find(userFilter).select("_id").lean();
+    if (moderators.length === 0) return [];
+
+    const notifications = await Notification.insertMany(
+      moderators.map(({ _id }) => ({ ...data, sender, user: _id }))
+    );
+
+    if (io) {
+      notifications.forEach((notification) => {
+        io.to(`user:${notification.user}`).emit("notification:new", notification);
+      });
+    }
+
+    return notifications;
+  } catch (error) {
+    console.error("Notify moderators error:", error);
+    return [];
+  }
+};
+
+module.exports = { sendNotification, broadcastNotification, notifyModerators };

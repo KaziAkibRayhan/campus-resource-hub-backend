@@ -15,6 +15,7 @@ const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
 const connectDB = require("./config/db");
 const initializeSocket = require("./socket");
+const { startAnnouncementScheduler } = require("./utils/announcementScheduler");
 
 // Load environment variables
 dotenv.config();
@@ -121,4 +122,6 @@ server.listen(PORT, () => {
   console.log(
     `🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`
   );
+  // Background job: fire notifications for scheduled announcements as they go live.
+  startAnnouncementScheduler(io);
 });

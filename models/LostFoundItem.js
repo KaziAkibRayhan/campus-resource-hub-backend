@@ -32,6 +32,13 @@ const lostFoundItemSchema = new mongoose.Schema(
       trim: true,
       maxlength: [120, "Contact cannot exceed 120 characters"],
     },
+    // Contact details are private by default — only the poster, an approved
+    // claimant, and moderators see them. "public" opts into showing everyone.
+    contactVisibility: {
+      type: String,
+      enum: ["public", "on-request"],
+      default: "on-request",
+    },
     imageUrl: {
       type: String,
       default: "",
@@ -65,11 +72,51 @@ const lostFoundItemSchema = new mongoose.Schema(
       enum: ["open", "claimed", "resolved"],
       default: "open",
     },
+    // Claim lifecycle: anyone (not the poster) can file a claim; the poster or
+    // a moderator approves one, which moves the item to "claimed" and reveals
+    // contact details to that claimant.
+    claims: [
+      {
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        note: { type: String, trim: true, maxlength: 300, default: "" },
+        status: {
+          type: String,
+          enum: ["pending", "approved", "rejected"],
+          default: "pending",
+        },
+        createdAt: { type: Date, default: Date.now },
+        decidedAt: { type: Date },
+      },
+    ],
+    claimedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    claimedAt: { type: Date },
+    resolvedAt: { type: Date },
+    // AI safety verdict snapshot (mirrors Resource.moderation).
+    moderation: {
+      status: {
+        type: String,
+        enum: ["approved", "partial", "skipped"],
+        default: "skipped",
+      },
+      flagged: { type: Boolean, default: false },
+      categories: { type: [String], default: [] },
+      provider: { type: String },
+      checkedAt: { type: Date },
+    },
   },
   { timestamps: true }
 );
 
 lostFoundItemSchema.index({ approved: 1, type: 1, status: 1, createdAt: -1 });
 lostFoundItemSchema.index({ postedBy: 1, createdAt: -1 });
+lostFoundItemSchema.index({ "moderation.flagged": 1, approved: 1 });
+lostFoundItemSchema.index({ "claims.user": 1 });
 
 module.exports = mongoose.model("LostFoundItem", lostFoundItemSchema);

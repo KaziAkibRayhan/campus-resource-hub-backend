@@ -20,17 +20,17 @@ const clubSchema = new mongoose.Schema(
       default: "General",
       trim: true,
     },
+    // "open" = join instantly; "request" = an officer must approve.
+    joinPolicy: {
+      type: String,
+      enum: ["open", "request"],
+      default: "open",
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
-    moderators: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
-    ],
     members: [
       {
         user: {
@@ -38,10 +38,26 @@ const clubSchema = new mongoose.Schema(
           ref: "User",
           required: true,
         },
+        role: {
+          type: String,
+          enum: ["member", "officer"],
+          default: "member",
+        },
         joinedAt: {
           type: Date,
           default: Date.now,
         },
+      },
+    ],
+    joinRequests: [
+      {
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        note: { type: String, trim: true, maxlength: 300, default: "" },
+        createdAt: { type: Date, default: Date.now },
       },
     ],
     approved: {
@@ -52,6 +68,7 @@ const clubSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-clubSchema.index({ approved: 1, name: 1 });
+clubSchema.index({ approved: 1, category: 1, name: 1 });
+clubSchema.index({ "members.user": 1 });
 
 module.exports = mongoose.model("Club", clubSchema);

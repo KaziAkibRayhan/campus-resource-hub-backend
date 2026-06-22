@@ -159,65 +159,69 @@ const moderateWithGroq = async ({ texts, images }) => {
 
   const flaggedCategories = new Set();
   let judged = false;
+  let lastError = null;
+
+  const applyVerdict = (verdict) => {
+    if (!verdict) return;
+    judged = true;
+    if (verdict.unsafe) {
+      for (const c of verdict.categories.length
+        ? verdict.categories
+        : ["unsafe content"]) {
+        flaggedCategories.add(c);
+      }
+    }
+  };
 
   const joinedText = chunkTexts(texts).join("\n").slice(0, TEXT_CHUNK_CHARS);
   if (joinedText) {
-    const completion = await client.chat.completions.create({
-      model: textModel,
-      messages: [
-        { role: "system", content: SAFETY_POLICY },
-        { role: "user", content: joinedText },
-      ],
-      max_tokens: 512,
-      temperature: 0,
-    });
-    const verdict = parseJudgeVerdict(
-      completion.choices?.[0]?.message?.content
-    );
-    if (verdict) {
-      judged = true;
-      if (verdict.unsafe) {
-        for (const c of verdict.categories.length
-          ? verdict.categories
-          : ["unsafe content"]) {
-          flaggedCategories.add(c);
-        }
-      }
+    try {
+      const completion = await client.chat.completions.create({
+        model: textModel,
+        messages: [
+          { role: "system", content: SAFETY_POLICY },
+          { role: "user", content: joinedText },
+        ],
+        max_tokens: 512,
+        temperature: 0,
+      });
+      applyVerdict(parseJudgeVerdict(completion.choices?.[0]?.message?.content));
+    } catch (error) {
+      // A failed text judge shouldn't discard image verdicts (and vice versa).
+      // We only throw at the end if NOTHING was judged.
+      lastError = error;
+      console.error("Groq text judge failed:", error.message);
     }
   }
 
   // Vision judge: one image per request keeps Scout reliable.
   for (const image of images) {
-    const completion = await client.chat.completions.create({
-      model: visionModel,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: SAFETY_POLICY },
-            { type: "image_url", image_url: { url: image.dataUrl } },
-          ],
-        },
-      ],
-      max_tokens: 256,
-      temperature: 0,
-    });
-    const verdict = parseJudgeVerdict(
-      completion.choices?.[0]?.message?.content
-    );
-    if (verdict) {
-      judged = true;
-      if (verdict.unsafe) {
-        for (const c of verdict.categories.length
-          ? verdict.categories
-          : ["unsafe content"]) {
-          flaggedCategories.add(c);
-        }
-      }
+    try {
+      const completion = await client.chat.completions.create({
+        model: visionModel,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: SAFETY_POLICY },
+              { type: "image_url", image_url: { url: image.dataUrl } },
+            ],
+          },
+        ],
+        max_tokens: 256,
+        temperature: 0,
+      });
+      applyVerdict(parseJudgeVerdict(completion.choices?.[0]?.message?.content));
+    } catch (error) {
+      lastError = error;
+      console.error("Groq vision judge failed for an image:", error.message);
     }
   }
 
   if (!judged) {
+    // Surface the underlying status (401/403/429) so the provider cooldown in
+    // moderateContent can trip instead of paying the failure on every upload.
+    if (lastError) throw lastError;
     throw new Error("Groq safety judges returned no parseable verdicts");
   }
 

@@ -2,7 +2,11 @@
 const Resource = require("../models/Resource");
 const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
-const { sendNotification, broadcastNotification } = require("../utils/notificationHelper");
+const {
+  sendNotification,
+  broadcastNotification,
+  notifyModerators,
+} = require("../utils/notificationHelper");
 const mammoth = require("mammoth");
 const { Readable } = require("stream");
 const { extractContent } = require("../utils/contentExtractor");
@@ -258,16 +262,31 @@ exports.uploadResource = async (req, res) => {
       images: extraction.images,
     });
 
-    if (verdict.flagged) {
+    // Child-sexual content is illegal to store anywhere — it is always
+    // hard-rejected and never uploaded, regardless of the review flow.
+    const isCSAM = verdict.flagged && verdict.categories.some((c) =>
+      /minor/i.test(c)
+    );
+    if (isCSAM) {
       return res.status(422).json({
         success: false,
         code: "CONTENT_REJECTED",
-        message: `Upload blocked: this file appears to contain ${describeCategories(
-          verdict.categories
-        )}. It violates community guidelines and was not uploaded.`,
+        message:
+          "Upload blocked: this file appears to contain sexual content involving minors. It violates community guidelines and was not uploaded.",
         categories: verdict.categories,
       });
     }
+
+    // Other flagged content (adult/violent/hateful/etc.) is no longer
+    // rejected outright. It is stored but held UNPUBLISHED so an admin or
+    // moderator can review it and decide whether to publish or reject.
+    //
+    // We ALSO hold uploads we could not automatically check (no provider
+    // reachable / partial extraction). Auto-publishing unscanned content would
+    // defeat the safety pipeline, so it goes to the same human review queue
+    // instead — fail safe, not fail open.
+    const moderationFailed = verdict.status !== "checked";
+    const heldForReview = verdict.flagged || moderationFailed;
 
     const moderation = {
       status:
@@ -276,6 +295,8 @@ exports.uploadResource = async (req, res) => {
             ? "partial"
             : "approved"
           : "skipped",
+      flagged: heldForReview,
+      categories: verdict.flagged ? verdict.categories : [],
       provider: verdict.provider || undefined,
       checkedAt: new Date(),
     };
@@ -302,14 +323,40 @@ exports.uploadResource = async (req, res) => {
       cloudinaryResourceType: uploadResult.resource_type,
       uploadedBy: req.user._id,
       moderation,
-      approved: true,
-      approvedBy: req.user._id,
-      approvedAt: Date.now(),
+      // Flagged uploads are held unpublished pending admin review; clean
+      // uploads are auto-approved and published immediately as before.
+      approved: !heldForReview,
+      approvedBy: heldForReview ? undefined : req.user._id,
+      approvedAt: heldForReview ? undefined : Date.now(),
     });
     createdResourceId = resource._id;
 
     // Populate uploader info
     await resource.populate("uploadedBy", "name email studentId");
+
+    if (heldForReview) {
+      // Don't announce it to everyone — only alert admins/moderators so they
+      // can review it. The uploader is told it's under review in the response.
+      const reviewReason = verdict.flagged
+        ? `was flagged for ${describeCategories(verdict.categories)}`
+        : "could not be automatically safety-checked";
+      await notifyModerators(req.io, {
+        title: "Resource needs review",
+        message: `${req.user.name}'s upload "${resource.title}" ${reviewReason} and is awaiting review.`,
+        type: "resource",
+        sender: req.user._id,
+        link: `/admin?tab=review`,
+        metadata: { resourceId: resource._id },
+      });
+
+      return res.status(201).json({
+        success: true,
+        code: "UNDER_REVIEW",
+        message:
+          "Your resource was uploaded and is under review. It will be published once a moderator approves it.",
+        resource,
+      });
+    }
 
     broadcastNotification(req.io, {
       excludeUser: req.user._id,
@@ -652,6 +699,11 @@ exports.approveResource = async (req, res) => {
     resource.approvedBy = req.user._id;
     resource.approvedAt = Date.now();
     resource.rejectionReason = undefined;
+    // Clear the AI flag once a human has reviewed and published it, so it
+    // drops out of the pending-review queue.
+    if (resource.moderation) {
+      resource.moderation.flagged = false;
+    }
 
     await resource.save();
 

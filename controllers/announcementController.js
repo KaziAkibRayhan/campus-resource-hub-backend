@@ -21,6 +21,30 @@ const getAttachmentFileType = (mimeType = "") => {
   return attachmentFileTypeMap[mimeType] || "FILE";
 };
 
+const canModerate = (user) =>
+  user && (user.role === "admin" || user.role === "moderator");
+
+const PRIORITIES = ["normal", "important", "urgent"];
+
+// Add per-user read state + scheduled/expired flags; never leak the full
+// reader list to clients.
+const shapeAnnouncement = (a, userId) => {
+  const readBy = a.readBy || [];
+  const nowDate = new Date();
+  const obj = { ...a };
+  obj.readCount = readBy.length;
+  obj.isRead = userId
+    ? readBy.some((id) => id.toString() === userId.toString())
+    : false;
+  obj.isScheduled = !!(a.publishAt && new Date(a.publishAt) > nowDate);
+  obj.isExpired = !!(a.expiresAt && new Date(a.expiresAt) <= nowDate);
+  delete obj.readBy;
+  return obj;
+};
+
+const audienceFor = (department) =>
+  department && department !== "All" ? { department } : undefined;
+
 const uploadAttachmentBuffer = (file) =>
   new Promise((resolve, reject) => {
     const isImage = file.mimetype.startsWith("image/");
@@ -78,44 +102,75 @@ const destroyAttachments = async (attachments = []) => {
 // @access  Public
 exports.getAnnouncements = async (req, res) => {
   try {
-    const { department, search, approved, limit, mine } = req.query;
+    const {
+      department,
+      search,
+      approved,
+      limit = 20,
+      page = 1,
+      mine,
+      priority,
+      scope, // "archived" → expired only (others hidden by default)
+    } = req.query;
     const query = {};
+    const moderator = canModerate(req.user);
+    const nowDate = new Date();
+    const and = [];
 
-    // Filter by current user's own posts
     if (mine === "true" && req.user) {
       query.postedBy = req.user._id;
-    } else if (!req.user || (req.user.role !== "admin" && req.user.role !== "moderator")) {
+    } else if (!moderator) {
+      // Public feed: approved, already published, not expired.
       query.approved = true;
+      and.push({ $or: [{ publishAt: { $lte: nowDate } }, { publishAt: null }] });
+      if (scope === "archived") {
+        and.push({ expiresAt: { $lte: nowDate } });
+      } else {
+        and.push({
+          $or: [
+            { expiresAt: { $exists: false } },
+            { expiresAt: null },
+            { expiresAt: { $gt: nowDate } },
+          ],
+        });
+      }
     } else if (approved !== undefined) {
       query.approved = approved === "true";
     }
-    // admin/moderator with no filter → sees all
+    // moderator with no filter → sees everything (incl. scheduled/expired)
 
     if (department && department !== "All") {
       query.department = { $in: [department, "All"] };
     }
-
-    if (search) {
-      query.title = { $regex: search, $options: "i" };
+    if (priority && priority !== "all" && PRIORITIES.includes(priority)) {
+      query.priority = priority;
     }
+    if (search) and.push({ title: { $regex: search, $options: "i" } });
+    if (and.length) query.$and = and;
 
-    let announcementsQuery = Announcement.find(query)
-      .populate("postedBy", "name email")
-      .sort("-createdAt")
-      .lean();
+    const perPage = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
 
-    if (limit) {
-      announcementsQuery = announcementsQuery.limit(parseInt(limit));
-    }
-
-    const announcements = await announcementsQuery;
+    const [announcements, total] = await Promise.all([
+      Announcement.find(query)
+        .populate("postedBy", "name email")
+        .sort({ pinned: -1, publishAt: -1, createdAt: -1 })
+        .skip((pageNum - 1) * perPage)
+        .limit(perPage)
+        .lean(),
+      Announcement.countDocuments(query),
+    ]);
 
     res.status(200).json({
       success: true,
       count: announcements.length,
-      announcements,
+      total,
+      totalPages: Math.ceil(total / perPage),
+      currentPage: pageNum,
+      announcements: announcements.map((a) => shapeAnnouncement(a, req.user?._id)),
     });
   } catch (error) {
+    console.error("Get announcements error:", error);
     res.status(500).json({
       success: false,
       message: error.message || "Error fetching announcements",
@@ -129,7 +184,8 @@ exports.getAnnouncements = async (req, res) => {
 exports.createAnnouncement = async (req, res) => {
   let attachments = [];
   try {
-    const { title, content, department } = req.body;
+    const { title, content, department, priority, pinned, publishAt, expiresAt } =
+      req.body;
 
     // Safety scan BEFORE anything is stored — text + inside attachments
     const rejection = await moderatePost({ texts: [title, content], files: req.files || [] });
@@ -146,10 +202,20 @@ exports.createAnnouncement = async (req, res) => {
       attachments = await Promise.all(req.files.map(uploadAttachmentBuffer));
     }
 
+    const scheduledFor = publishAt ? new Date(publishAt) : new Date();
+    const publishNow = scheduledFor <= new Date();
+
     const announcement = await Announcement.create({
       title,
       content,
       department,
+      priority: PRIORITIES.includes(priority) ? priority : "normal",
+      pinned: pinned === "true" || pinned === true,
+      publishAt: scheduledFor,
+      expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+      // Publish-now posts notify immediately below; scheduled ones are picked up
+      // by the scheduler when they go live.
+      notified: publishNow,
       attachments,
       postedBy: req.user._id,
       approved: true,
@@ -159,29 +225,79 @@ exports.createAnnouncement = async (req, res) => {
 
     await announcement.populate("postedBy", "name email");
 
-    // Realtime: everyone gets a persistent notification + open pages refresh.
-    broadcastNotification(req.io, {
-      excludeUser: req.user._id,
-      title: "New announcement",
-      message: `${announcement.title}${announcement.department && announcement.department !== "All" ? ` (${announcement.department})` : ""}`,
-      type: "announcement",
-      sender: req.user._id,
-      link: `/announcements?highlight=${announcement._id}`,
-      metadata: { announcementId: announcement._id },
-    });
-    req.io?.emit("announcement:new", announcement);
+    if (publishNow) {
+      // Target the relevant department (or everyone for "All").
+      broadcastNotification(req.io, {
+        excludeUser: req.user._id,
+        audience: audienceFor(announcement.department),
+        title: "New announcement",
+        message: `${announcement.title}${announcement.department && announcement.department !== "All" ? ` (${announcement.department})` : ""}`,
+        type: "announcement",
+        sender: req.user._id,
+        link: `/announcements?highlight=${announcement._id}`,
+        metadata: { announcementId: announcement._id },
+      });
+      req.io?.emit("announcement:new", announcement);
+    }
 
     res.status(201).json({
       success: true,
-      message: "Announcement created successfully",
-      announcement,
+      message: publishNow
+        ? "Announcement created successfully"
+        : `Announcement scheduled for ${scheduledFor.toLocaleString()}`,
+      announcement: shapeAnnouncement(announcement.toObject(), req.user._id),
     });
   } catch (error) {
     await destroyAttachments(attachments);
+    console.error("Create announcement error:", error);
     res.status(500).json({
       success: false,
       message: error.message || "Error creating announcement",
     });
+  }
+};
+
+// @route PUT /api/announcements/:id/read  — mark read by current user
+exports.markRead = async (req, res) => {
+  try {
+    await Announcement.updateOne(
+      { _id: req.params.id },
+      { $addToSet: { readBy: req.user._id } }
+    );
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Mark announcement read error:", error);
+    res.status(500).json({ success: false, message: "Error marking read" });
+  }
+};
+
+// @route PUT /api/announcements/:id/pin  — toggle pinned (owner/mod)
+exports.togglePin = async (req, res) => {
+  try {
+    const announcement = await Announcement.findById(req.params.id);
+    if (!announcement) {
+      return res.status(404).json({ success: false, message: "Announcement not found" });
+    }
+    if (
+      announcement.postedBy.toString() !== req.user._id.toString() &&
+      !canModerate(req.user)
+    ) {
+      return res.status(403).json({ success: false, message: "Not authorized" });
+    }
+
+    announcement.pinned = !announcement.pinned;
+    await announcement.save();
+    await announcement.populate("postedBy", "name email");
+    req.io?.emit("announcement:updated", announcement);
+
+    res.status(200).json({
+      success: true,
+      message: announcement.pinned ? "Pinned" : "Unpinned",
+      announcement: shapeAnnouncement(announcement.toObject(), req.user._id),
+    });
+  } catch (error) {
+    console.error("Toggle pin error:", error);
+    res.status(500).json({ success: false, message: "Error updating pin" });
   }
 };
 
@@ -244,6 +360,8 @@ exports.approveAnnouncement = async (req, res) => {
     announcement.approved = true;
     announcement.approvedBy = req.user._id;
     announcement.rejectionReason = "";
+    const publishNow = !announcement.publishAt || announcement.publishAt <= new Date();
+    if (publishNow) announcement.notified = true;
     await announcement.save();
 
     await sendNotification(req.io, {
@@ -254,15 +372,20 @@ exports.approveAnnouncement = async (req, res) => {
       link: `/announcements?highlight=${announcement._id}`,
     });
 
-    broadcastNotification(req.io, {
-      excludeUser: announcement.postedBy,
-      title: "New announcement",
-      message: `${announcement.title}${announcement.department && announcement.department !== "All" ? ` (${announcement.department})` : ""}`,
-      type: "announcement",
-      link: `/announcements?highlight=${announcement._id}`,
-      metadata: { announcementId: announcement._id },
-    });
-    req.io?.emit("announcement:new", announcement);
+    // Only fan out now if it's already live; scheduled ones go out via the
+    // scheduler when they publish.
+    if (publishNow) {
+      broadcastNotification(req.io, {
+        excludeUser: announcement.postedBy,
+        audience: audienceFor(announcement.department),
+        title: "New announcement",
+        message: `${announcement.title}${announcement.department && announcement.department !== "All" ? ` (${announcement.department})` : ""}`,
+        type: "announcement",
+        link: `/announcements?highlight=${announcement._id}`,
+        metadata: { announcementId: announcement._id },
+      });
+      req.io?.emit("announcement:new", announcement);
+    }
 
     res.status(200).json({
       success: true,
@@ -345,9 +468,14 @@ exports.updateAnnouncement = async (req, res) => {
       }
     }
 
+    const { priority, pinned, publishAt, expiresAt } = req.body;
     if (title)      announcement.title      = title;
     if (content)    announcement.content    = content;
     if (department) announcement.department = department;
+    if (priority && PRIORITIES.includes(priority)) announcement.priority = priority;
+    if (pinned !== undefined) announcement.pinned = pinned === "true" || pinned === true;
+    if (publishAt !== undefined) announcement.publishAt = publishAt ? new Date(publishAt) : new Date();
+    if (expiresAt !== undefined) announcement.expiresAt = expiresAt ? new Date(expiresAt) : undefined;
 
     // removeAttachments: JSON array of publicIds to drop
     if (removeAttachments) {

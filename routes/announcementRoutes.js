@@ -7,6 +7,8 @@ const {
   rejectAnnouncement,
   deleteAnnouncement,
   streamAttachment,
+  markRead,
+  togglePin,
 } = require("../controllers/announcementController");
 const {
   protect,
@@ -39,6 +41,8 @@ router.put(
   authorize("admin", "moderator"),
   rejectAnnouncement
 );
+router.put("/:id/read", protect, markRead);
+router.put("/:id/pin", protect, togglePin);
 router.put(
   "/:id",
   protect,

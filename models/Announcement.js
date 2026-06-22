@@ -20,6 +20,36 @@ const announcementSchema = new mongoose.Schema(
       enum: ["CSE", "EEE", "BBA", "English", "Law", "All"],
       default: "All",
     },
+    priority: {
+      type: String,
+      enum: ["normal", "important", "urgent"],
+      default: "normal",
+    },
+    pinned: {
+      type: Boolean,
+      default: false,
+    },
+    // Scheduled publishing: hidden from the public feed until publishAt.
+    publishAt: {
+      type: Date,
+      default: Date.now,
+    },
+    // Optional auto-archive: hidden from the default feed after expiresAt.
+    expiresAt: {
+      type: Date,
+    },
+    // Guard so the scheduler broadcasts a scheduled announcement only once.
+    notified: {
+      type: Boolean,
+      default: false,
+    },
+    // Per-user read receipts.
+    readBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
     postedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -56,6 +86,7 @@ const announcementSchema = new mongoose.Schema(
   }
 );
 
-announcementSchema.index({ approved: 1, department: 1, createdAt: -1 });
+announcementSchema.index({ approved: 1, department: 1, pinned: -1, publishAt: -1 });
+announcementSchema.index({ expiresAt: 1 });
 
 module.exports = mongoose.model("Announcement", announcementSchema);

@@ -82,6 +82,19 @@ const resourceSchema = new mongoose.Schema(
         enum: ["approved", "partial", "skipped"],
         default: "skipped",
       },
+      // true when the AI flagged this upload as potentially harmful/adult.
+      // Flagged items are held unpublished for an admin/moderator to review
+      // and then publish or reject.
+      flagged: {
+        type: Boolean,
+        default: false,
+      },
+      // Human-readable categories the AI flagged (e.g. "sexual or nude
+      // content", "violent content"), shown to admins in the review queue.
+      categories: {
+        type: [String],
+        default: [],
+      },
       provider: String,
       checkedAt: Date,
     },

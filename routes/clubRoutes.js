@@ -4,8 +4,13 @@ const {
   createClub,
   deleteClub,
   getClubs,
+  getClubById,
   joinClub,
   leaveClub,
+  updateClub,
+  decideRequest,
+  setMemberRole,
+  removeMember,
 } = require("../controllers/clubController");
 const { protect, authorize, optionalProtect } = require("../middleware/authMiddleware");
 const { handleValidationErrors } = require("../utils/validation");
@@ -19,9 +24,14 @@ const validateClub = [
 ];
 
 router.get("/", optionalProtect, getClubs);
+router.get("/:id", optionalProtect, getClubById);
 router.post("/", protect, authorize("admin", "moderator"), validateClub, handleValidationErrors, createClub);
+router.put("/:id", protect, updateClub);
 router.post("/:id/join", protect, joinClub);
 router.delete("/:id/leave", protect, leaveClub);
+router.put("/:id/requests/:userId", protect, decideRequest);
+router.put("/:id/members/:userId/role", protect, setMemberRole);
+router.delete("/:id/members/:userId", protect, removeMember);
 router.delete("/:id", protect, deleteClub);
 
 module.exports = router;

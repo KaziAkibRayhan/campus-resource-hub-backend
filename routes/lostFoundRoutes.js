@@ -2,10 +2,14 @@ const express = require("express");
 const { body } = require("express-validator");
 const {
   approveItem,
+  claimItem,
   createItem,
+  decideClaim,
   deleteItem,
   getItems,
   rejectItem,
+  reopenItem,
+  resolveItem,
   updateItem,
 } = require("../controllers/lostFoundController");
 const { protect, authorize, optionalProtect } = require("../middleware/authMiddleware");
@@ -42,6 +46,20 @@ router.put(
   updateItem
 );
 router.delete("/:id", protect, deleteItem);
+
+// Claim lifecycle
+router.post(
+  "/:id/claims",
+  protect,
+  body("note").optional().trim().isLength({ max: 300 }).withMessage("Note too long"),
+  handleValidationErrors,
+  claimItem
+);
+router.put("/:id/claims/:claimId", protect, decideClaim);
+router.put("/:id/resolve", protect, resolveItem);
+router.put("/:id/reopen", protect, reopenItem);
+
+// Moderation
 router.put("/:id/approve", protect, authorize("admin", "moderator"), approveItem);
 router.put("/:id/reject", protect, authorize("admin", "moderator"), rejectItem);
 
