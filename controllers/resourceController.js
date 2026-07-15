@@ -10,6 +10,7 @@ const {
 const mammoth = require("mammoth");
 const { Readable } = require("stream");
 const { extractContent } = require("../utils/contentExtractor");
+const { semanticPaginatedFind } = require("../utils/semanticSearch");
 const {
   moderateContent,
   describeCategories,
@@ -464,16 +465,39 @@ exports.getResources = async (req, res) => {
       query.course = new RegExp(course, "i");
     }
 
-    // Search in title and description
+    // Search in title and description. Semantic (vector) search first —
+    // relevance-ranked with exact keyword matches kept on top. Falls through
+    // to the legacy regex path when the embedding model is unavailable.
     if (search) {
-      const searchOR = {
-        $or: [
-          { title: new RegExp(search, "i") },
-          { description: new RegExp(search, "i") },
-          { course: new RegExp(search, "i") },
-        ],
-      };
+      const regexOr = [
+        { title: new RegExp(search, "i") },
+        { description: new RegExp(search, "i") },
+        { course: new RegExp(search, "i") },
+      ];
 
+      const semanticResult = await semanticPaginatedFind(Resource, {
+        type: "resource",
+        search,
+        baseQuery: query, // visibility + department/semester/course filters, no search $or
+        regexOr,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        populate: [["uploadedBy", "name email studentId"]],
+      });
+
+      if (semanticResult) {
+        return res.status(200).json({
+          success: true,
+          count: semanticResult.docs.length,
+          total: semanticResult.total,
+          totalPages: Math.ceil(semanticResult.total / parseInt(limit)),
+          currentPage: parseInt(page),
+          resources: semanticResult.docs,
+          semantic: true,
+        });
+      }
+
+      const searchOR = { $or: regexOr };
       if (query.$and) {
         query.$and.push(searchOR);
       } else {

@@ -119,4 +119,6 @@ lostFoundItemSchema.index({ postedBy: 1, createdAt: -1 });
 lostFoundItemSchema.index({ "moderation.flagged": 1, approved: 1 });
 lostFoundItemSchema.index({ "claims.user": 1 });
 
+lostFoundItemSchema.plugin(require("../utils/embeddingSync").embeddingPlugin, { type: "lost-found" });
+
 module.exports = mongoose.model("LostFoundItem", lostFoundItemSchema);

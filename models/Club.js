@@ -71,4 +71,6 @@ const clubSchema = new mongoose.Schema(
 clubSchema.index({ approved: 1, category: 1, name: 1 });
 clubSchema.index({ "members.user": 1 });
 
+clubSchema.plugin(require("../utils/embeddingSync").embeddingPlugin, { type: "club" });
+
 module.exports = mongoose.model("Club", clubSchema);

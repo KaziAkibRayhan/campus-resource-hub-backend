@@ -99,4 +99,6 @@ eventSchema.index({ approved: 1, status: 1, date: 1 });
 eventSchema.index({ clubRef: 1, date: 1 });
 eventSchema.index({ "registrations.user": 1 });
 
+eventSchema.plugin(require("../utils/embeddingSync").embeddingPlugin, { type: "event" });
+
 module.exports = mongoose.model("Event", eventSchema);

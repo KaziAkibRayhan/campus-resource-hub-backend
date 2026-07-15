@@ -4,6 +4,7 @@ const Notification = require("../models/Notification");
 const cloudinary = require("../config/cloudinary");
 const { sendNotification, broadcastNotification } = require("../utils/notificationHelper");
 const { moderatePost } = require("../utils/postModeration");
+const { semanticPaginatedFind } = require("../utils/semanticSearch");
 
 const attachmentFileTypeMap = {
   "application/pdf": "PDF",
@@ -145,11 +146,47 @@ exports.getAnnouncements = async (req, res) => {
     if (priority && priority !== "all" && PRIORITIES.includes(priority)) {
       query.priority = priority;
     }
-    if (search) and.push({ title: { $regex: search, $options: "i" } });
-    if (and.length) query.$and = and;
-
     const perPage = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+
+    if (search) {
+      // Semantic search first (relevance-ranked, keyword matches kept on
+      // top); legacy regex when the embedding model is unavailable. Regex
+      // coverage widened from title-only to content too. The publish/expiry
+      // clauses stay in baseQuery, so scheduled/expired posts can't leak.
+      const regexOr = [
+        { title: { $regex: search, $options: "i" } },
+        { content: { $regex: search, $options: "i" } },
+      ];
+      const baseQuery = and.length ? { ...query, $and: [...and] } : { ...query };
+
+      const semanticResult = await semanticPaginatedFind(Announcement, {
+        type: "announcement",
+        search,
+        baseQuery,
+        regexOr,
+        page: pageNum,
+        limit: perPage,
+        populate: [["postedBy", "name email"]],
+      });
+
+      if (semanticResult) {
+        return res.status(200).json({
+          success: true,
+          count: semanticResult.docs.length,
+          total: semanticResult.total,
+          totalPages: Math.ceil(semanticResult.total / perPage),
+          currentPage: pageNum,
+          announcements: semanticResult.docs.map((a) =>
+            shapeAnnouncement(a, req.user?._id)
+          ),
+          semantic: true,
+        });
+      }
+
+      and.push({ $or: regexOr });
+    }
+    if (and.length) query.$and = and;
 
     const [announcements, total] = await Promise.all([
       Announcement.find(query)

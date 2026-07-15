@@ -5,6 +5,7 @@ const {
   broadcastNotification,
 } = require("../utils/notificationHelper");
 const { moderatePost } = require("../utils/postModeration");
+const { semanticPaginatedFind } = require("../utils/semanticSearch");
 
 const canModerate = (user) =>
   user && (user.role === "admin" || user.role === "moderator");
@@ -69,7 +70,6 @@ exports.getEvents = async (req, res) => {
       query.approved = approved === "true";
     }
 
-    if (search) query.title = { $regex: search, $options: "i" };
     if (clubRef) query.clubRef = clubRef;
 
     // Date scoping (calendar uses from/to; lists use scope).
@@ -86,6 +86,45 @@ exports.getEvents = async (req, res) => {
     const perPage = Math.min(Math.max(parseInt(limit, 10) || 12, 1), 100);
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
     const sortDir = scope === "past" ? "-date" : "date";
+
+    if (search) {
+      // Semantic search first (relevance-ranked, keyword matches kept on
+      // top); legacy regex when the embedding model is unavailable. Regex
+      // coverage widened from title-only to the other text fields too.
+      const regexOr = [
+        { title: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+        { club: { $regex: search, $options: "i" } },
+        { location: { $regex: search, $options: "i" } },
+      ];
+
+      const semanticResult = await semanticPaginatedFind(Event, {
+        type: "event",
+        search,
+        baseQuery: query,
+        regexOr,
+        page: pageNum,
+        limit: perPage,
+        populate: [
+          ["postedBy", "name email"],
+          ["clubRef", "name"],
+        ],
+      });
+
+      if (semanticResult) {
+        return res.status(200).json({
+          success: true,
+          count: semanticResult.docs.length,
+          total: semanticResult.total,
+          totalPages: Math.ceil(semanticResult.total / perPage),
+          currentPage: pageNum,
+          events: semanticResult.docs.map((e) => shapeEvent(e, req.user?._id)),
+          semantic: true,
+        });
+      }
+
+      query.$or = regexOr;
+    }
 
     const [events, total] = await Promise.all([
       Event.find(query)

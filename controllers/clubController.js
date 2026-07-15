@@ -5,6 +5,7 @@ const {
   sendNotification,
 } = require("../utils/notificationHelper");
 const { moderatePost } = require("../utils/postModeration");
+const { semanticPaginatedFind } = require("../utils/semanticSearch");
 
 const canModerate = (user) => user && ["admin", "moderator"].includes(user.role);
 
@@ -51,16 +52,48 @@ exports.getClubs = async (req, res) => {
     const query = { approved: true };
 
     if (category && category !== "all") query.category = category;
+
+    const perPage = Math.min(Math.max(parseInt(limit, 10) || 12, 1), 50);
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+
     if (search) {
-      query.$or = [
+      // Semantic search first (relevance-ranked, keyword matches kept on
+      // top); legacy regex when the embedding model is unavailable.
+      const regexOr = [
         { name: new RegExp(search, "i") },
         { description: new RegExp(search, "i") },
         { category: new RegExp(search, "i") },
       ];
-    }
 
-    const perPage = Math.min(Math.max(parseInt(limit, 10) || 12, 1), 50);
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+      const semanticResult = await semanticPaginatedFind(Club, {
+        type: "club",
+        search,
+        baseQuery: query,
+        regexOr,
+        page: pageNum,
+        limit: perPage,
+        populate: [
+          ["createdBy", "name email"],
+          ["joinRequests.user", "name email studentId"],
+        ],
+      });
+
+      if (semanticResult) {
+        const categories = await Club.distinct("category", { approved: true });
+        return res.status(200).json({
+          success: true,
+          count: semanticResult.docs.length,
+          total: semanticResult.total,
+          totalPages: Math.ceil(semanticResult.total / perPage),
+          currentPage: pageNum,
+          categories: categories.filter(Boolean).sort(),
+          clubs: semanticResult.docs.map((c) => shapeClub(c, req.user)),
+          semantic: true,
+        });
+      }
+
+      query.$or = regexOr;
+    }
 
     const [clubs, total, categories] = await Promise.all([
       Club.find(query)

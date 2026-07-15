@@ -89,4 +89,6 @@ const announcementSchema = new mongoose.Schema(
 announcementSchema.index({ approved: 1, department: 1, pinned: -1, publishAt: -1 });
 announcementSchema.index({ expiresAt: 1 });
 
+announcementSchema.plugin(require("../utils/embeddingSync").embeddingPlugin, { type: "announcement" });
+
 module.exports = mongoose.model("Announcement", announcementSchema);

@@ -137,4 +137,6 @@ resourceSchema.virtual("uploaderName").get(function () {
 resourceSchema.set("toJSON", { virtuals: true });
 resourceSchema.set("toObject", { virtuals: true });
 
+resourceSchema.plugin(require("../utils/embeddingSync").embeddingPlugin, { type: "resource" });
+
 module.exports = mongoose.model("Resource", resourceSchema);

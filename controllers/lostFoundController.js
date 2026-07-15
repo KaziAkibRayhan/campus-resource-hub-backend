@@ -6,6 +6,7 @@ const {
   notifyModerators,
 } = require("../utils/notificationHelper");
 const { screenPost } = require("../utils/postModeration");
+const { semanticPaginatedFind } = require("../utils/semanticSearch");
 
 const statusLabels = {
   open: "open again",
@@ -193,18 +194,51 @@ exports.getItems = async (req, res) => {
 
     if (type && type !== "all") query.type = type;
     if (status && status !== "all") query.status = status;
+
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const perPage = Math.min(Math.max(parseInt(limit, 10) || 12, 1), 50);
+
     if (search) {
       const searchOr = [
         { item: new RegExp(search, "i") },
         { description: new RegExp(search, "i") },
         { location: new RegExp(search, "i") },
       ];
+
+      // Semantic search first (relevance-ranked, keyword matches kept on
+      // top); legacy regex when the embedding model is unavailable.
+      // baseQuery is the query BEFORE the search $or merge, so the review
+      // queue's rejectionReason $or stays intact as a visibility filter.
+      const semanticResult = await semanticPaginatedFind(LostFoundItem, {
+        type: "lost-found",
+        search,
+        baseQuery: { ...query },
+        regexOr: searchOr,
+        page: pageNum,
+        limit: perPage,
+        populate: [
+          ["postedBy", "name email studentId"],
+          ["claimedBy", "name email studentId"],
+          ["claims.user", "name email studentId"],
+        ],
+      });
+
+      if (semanticResult) {
+        return res.status(200).json({
+          success: true,
+          count: semanticResult.docs.length,
+          total: semanticResult.total,
+          totalPages: Math.ceil(semanticResult.total / perPage),
+          currentPage: pageNum,
+          items: semanticResult.docs.map((it) => shapeItem(it, req.user)),
+          semantic: true,
+        });
+      }
+
       if (query.$or) query.$and = [{ $or: query.$or }, { $or: searchOr }];
       else query.$or = searchOr;
     }
 
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const perPage = Math.min(Math.max(parseInt(limit, 10) || 12, 1), 50);
     const skip = (pageNum - 1) * perPage;
 
     const [items, total] = await Promise.all([
