@@ -61,7 +61,10 @@ app.use(
   "/api",
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 300,
+    // 300 was too low: the admin panel alone fires 8 requests per load, and a
+    // single active user (navigation + AI search + notifications) can burn
+    // through it in minutes — everything then 429s ("Failed to fetch ...").
+    max: 1500,
     standardHeaders: true,
     legacyHeaders: false,
     message: {
