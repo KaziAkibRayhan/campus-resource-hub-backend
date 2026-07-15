@@ -79,6 +79,76 @@ const parseJudgeVerdict = (raw) => {
   }
 };
 
+// Deterministic keyword pre-filter, checked BEFORE any AI provider. The LLM
+// judges can waver on borderline phrasing ("this is nude text" was judged
+// safe one run and unsafe the next); these patterns guarantee that obviously
+// harmful text is flagged every single time, with zero API cost. Images are
+// not covered here (no OCR) — they still go to the vision judge.
+// Category strings must match CATEGORY_LABELS values so the downstream
+// review/reject flows (including the /minor/i CSAM check) work unchanged.
+const KEYWORD_RULES = [
+  {
+    category: "sexual content involving minors",
+    patterns: [/\bchild\s*porn\w*/i, /\bc\.?s\.?a\.?m\b/i, /\bpedo(?:phile|philia)?\b/i],
+  },
+  {
+    category: "sexual or nude content",
+    patterns: [
+      /\bnudes?\b/i,
+      /\bnudity\b/i,
+      /\bnaked(?!\s+eye)\b/i, // "naked eye" is common in physics/astronomy notes
+      /\bporn\w*/i,
+      /\bxxx\b/i,
+      /\bnsfw\b/i,
+      /\bhentai\b/i,
+      /\bonlyfans\b/i,
+      /\bsex\s*(?:video|tape|pic|photo|chat)s?\b/i,
+      /\bsexually\s+explicit\b/i,
+      /\bblow\s*job\b/i,
+      /\bdick\s*pic\b/i,
+    ],
+  },
+  {
+    category: "graphic violence",
+    patterns: [
+      /\b(?:i|we)(?:'ll|\s+will|\s+gonna|\s+am\s+going\s+to)\s+kill\b/i,
+      /\bkill\s+(?:you|him|her|them|everyone)\b/i,
+      /\bshoot\s+up\s+(?:the\s+)?(?:school|campus|class)\b/i,
+      /\bbehead\w*/i,
+      /\bgore\s+video\b/i,
+    ],
+  },
+  {
+    category: "self-harm content",
+    patterns: [
+      /\bkill\s+myself\b/i,
+      /\bkms\b/i,
+      /\bhow\s+to\s+(?:commit\s+)?suicide\b/i,
+      /\bcut(?:ting)?\s+myself\b/i,
+    ],
+  },
+  {
+    category: "illicit activity",
+    patterns: [
+      /\bhow\s+to\s+(?:make|build)\s+a\s+(?:bomb|gun|explosive)\b/i,
+      /\b(?:buy|sell|selling)\s+(?:drugs|weed|cocaine|heroin|meth|yaba)\b/i,
+      /\bdrug\s+deal\w*/i,
+    ],
+  },
+];
+
+const keywordScan = (texts = []) => {
+  const joined = texts.filter(Boolean).join("\n");
+  if (!joined.trim()) return null;
+  const categories = new Set();
+  for (const rule of KEYWORD_RULES) {
+    if (rule.patterns.some((pattern) => pattern.test(joined))) {
+      categories.add(rule.category);
+    }
+  }
+  return categories.size ? [...categories] : null;
+};
+
 const TEXT_CHUNK_CHARS = 6000;
 const MAX_TEXT_CHUNKS = 6;
 const IMAGES_PER_REQUEST = 2;
@@ -242,6 +312,21 @@ const moderateContent = async ({ texts = [], images = [] }) => {
     texts.some((t) => (t || "").trim()) || images.length > 0;
   if (!hasContent) {
     return { flagged: false, categories: [], provider: null, status: "checked" };
+  }
+
+  // Deterministic pass first: obvious harmful text never depends on an AI
+  // provider being reachable or on a borderline LLM verdict.
+  const keywordHits = keywordScan(texts);
+  if (keywordHits) {
+    console.log(
+      `Moderation via keyword-filter: FLAGGED [${keywordHits.join(", ")}]`
+    );
+    return {
+      flagged: true,
+      categories: keywordHits,
+      provider: "keyword-filter",
+      status: "checked",
+    };
   }
 
   const providers = [];
