@@ -61,7 +61,7 @@ const force = process.argv.includes("--force");
       let ops = [];
       const total = await Model.countDocuments();
 
-      for await (const doc of Model.find().lean().cursor()) {
+      for await (const doc of Model.find().select("+contentExcerpt").lean().cursor()) {
         const text = buildDocText(type, doc);
         if (!text.trim()) {
           skipped++;

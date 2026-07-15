@@ -16,6 +16,15 @@ const resourceSchema = new mongoose.Schema(
       minlength: [10, "Description must be at least 10 characters"],
       maxlength: [500, "Description cannot exceed 500 characters"],
     },
+    // First few thousand characters of text extracted from inside the file
+    // (PDF/DOCX/PPTX/XLSX) at upload time. Feeds semantic-search embeddings
+    // and the AI assistant's context so it can answer "what's inside X".
+    // Not selected by default — list endpoints don't need the payload.
+    contentExcerpt: {
+      type: String,
+      maxlength: 4000,
+      select: false,
+    },
     course: {
       type: String,
       required: [true, "Please provide a course code"],

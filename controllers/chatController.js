@@ -125,7 +125,7 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
       resourceVisibilityFilter,
       makeCollectionAwareSearch(q, ["title", "description", "course", "department"], requestedCollections.resources, hasCollectionIntent)
     ))
-      .select("title description course department semester fileType uploadedBy createdAt")
+      .select("title description course department semester fileType uploadedBy createdAt +contentExcerpt")
       .populate("uploadedBy", "name")
       .sort({ createdAt: -1 })
       .limit(searchLimit)
@@ -231,7 +231,7 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
       resources,
       Resource,
       resourceVisibilityFilter,
-      "title description course department semester fileType uploadedBy createdAt",
+      "title description course department semester fileType uploadedBy createdAt +contentExcerpt",
       ["uploadedBy", "name"]
     ),
     mergeSemantic(
@@ -278,6 +278,10 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
       title: resource.title,
       subtitle: `${resource.course} · ${resource.department} · ${resource.semester}`,
       description: resource.description,
+      // Inner-file excerpt: lets the assistant answer "what's inside X".
+      content: resource.contentExcerpt
+        ? resource.contentExcerpt.slice(0, 700)
+        : undefined,
       href: "/resources",
       score: scoreByKey.get(`resource:${resource._id}`) ?? 0.5,
     })),
@@ -343,7 +347,7 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
 
 const buildAssistantContext = (results) =>
   results.map((item, index) => (
-    `[${index + 1}] Type: ${item.type}\nTitle: ${item.title}\nDetails: ${item.subtitle}\nDescription: ${item.description || "N/A"}\nPath: ${item.href || "Start a direct chat from the People list"}`
+    `[${index + 1}] Type: ${item.type}\nTitle: ${item.title}\nDetails: ${item.subtitle}\nDescription: ${item.description || "N/A"}${item.content ? `\nFile content (excerpt): ${item.content}` : ""}\nPath: ${item.href || "Start a direct chat from the People list"}`
   )).join("\n\n");
 
 // Live hub snapshot — lets the assistant answer overview questions ("upcoming

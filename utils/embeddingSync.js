@@ -11,13 +11,14 @@ const { buildDocText, contentHash, embedText, MODEL_ID } = require("./embeddingS
 let modelsByType = null;
 const getModels = () => {
   if (!modelsByType) {
-    const mongoose = require("mongoose");
+    // Require by path (not mongoose.model(name)) so standalone scripts that
+    // only loaded one model still work — requiring registers the schema.
     modelsByType = {
-      resource: mongoose.model("Resource"),
-      club: mongoose.model("Club"),
-      announcement: mongoose.model("Announcement"),
-      event: mongoose.model("Event"),
-      "lost-found": mongoose.model("LostFoundItem"),
+      resource: require("../models/Resource"),
+      club: require("../models/Club"),
+      announcement: require("../models/Announcement"),
+      event: require("../models/Event"),
+      "lost-found": require("../models/LostFoundItem"),
     };
   }
   return modelsByType;
@@ -29,7 +30,12 @@ const syncEmbedding = (type, docId) => {
     try {
       const Embedding = getEmbeddingModel();
       // Re-fetch: post-findOneAndUpdate hooks may hand us the pre-update doc.
-      const doc = await getModels()[type].findById(docId).lean();
+      // "+contentExcerpt" pulls the select:false excerpt on resources (no-op
+      // for the other models).
+      const doc = await getModels()[type]
+        .findById(docId)
+        .select("+contentExcerpt")
+        .lean();
       if (!doc) {
         await Embedding.deleteOne({ sourceType: type, sourceId: docId });
         return;

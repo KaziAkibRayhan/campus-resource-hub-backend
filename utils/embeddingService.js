@@ -96,6 +96,8 @@ const DOC_TEXT_BUILDERS = {
       doc.course && `Course: ${doc.course}`,
       doc.department && `Department: ${doc.department}`,
       doc.semester && `Semester: ${doc.semester}`,
+      // Inner file text so "what's inside X" queries match semantically.
+      doc.contentExcerpt && `Content: ${doc.contentExcerpt.slice(0, 1200)}`,
     ]
       .filter(Boolean)
       .join("\n"),

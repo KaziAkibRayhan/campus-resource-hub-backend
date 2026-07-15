@@ -255,6 +255,13 @@ exports.uploadResource = async (req, res) => {
     // Content safety check BEFORE anything is stored: look inside the file
     // (text, images, PDF pages) and reject harmful uploads with a warning.
     const extraction = await extractContent(req.file, fileType);
+    // Keep an excerpt of the file's inner text: it powers semantic search and
+    // lets the AI assistant answer questions about what's inside the file.
+    const contentExcerpt = extraction.texts
+      .join("\n")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 4000);
     const verdict = await moderateContent({
       texts: [
         [title, description, course].filter(Boolean).join("\n"),
@@ -318,6 +325,7 @@ exports.uploadResource = async (req, res) => {
       department,
       semester,
       fileUrl: uploadResult.secure_url,
+      contentExcerpt: contentExcerpt || undefined,
       fileType,
       fileSize: uploadResult.bytes || req.file.size,
       cloudinaryPublicId: uploadResult.public_id,
