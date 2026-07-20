@@ -9,9 +9,10 @@ COPY --chown=node:node . .
 
 ENV NODE_ENV=production \
     EMBEDDINGS_DISABLED=1 \
+    PORT=8080 \
     NODE_OPTIONS=--max-old-space-size=160
 
-EXPOSE 5000
+EXPOSE 8080
 
 USER node
 
