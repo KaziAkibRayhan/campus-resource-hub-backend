@@ -14,14 +14,16 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
 const connectDB = require("./config/db");
+const configureSocketAdapter = require("./config/socketAdapter");
 const initializeSocket = require("./socket");
 const { startAnnouncementScheduler } = require("./utils/announcementScheduler");
 
 // Load environment variables
 dotenv.config();
 
-// Connect to MongoDB
-connectDB();
+// Connect to MongoDB. Socket.IO and API requests wait for this promise when
+// Vercel also needs MongoDB for cross-instance realtime coordination.
+const databaseReady = connectDB();
 
 // Initialize Express app
 const app = express();
@@ -41,12 +43,21 @@ const io = new Server(server, {
   transports: ["websocket", "polling"],
 });
 
-initializeSocket(io);
+const realtimeReady = configureSocketAdapter(io, databaseReady);
+// Mark startup failures as handled even before the first HTTP/WebSocket request;
+// individual requests still receive the same rejection below.
+void realtimeReady.catch(() => {});
+initializeSocket(io, realtimeReady);
 
 // Middleware
-app.use((req, res, next) => {
-  req.io = io;
-  next();
+app.use(async (req, res, next) => {
+  try {
+    await realtimeReady;
+    req.io = io;
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.use(
@@ -119,12 +130,17 @@ app.use((req, res) => {
   });
 });
 
-// Start server
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(
-    `🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`
-  );
-  // Background job: fire notifications for scheduled announcements as they go live.
-  startAnnouncementScheduler(io);
-});
+// Render/local runs this file directly and needs a listening process. Vercel
+// imports and owns the exported HTTP server instead.
+if (require.main === module) {
+  const PORT = process.env.PORT || 5000;
+  server.listen(PORT, () => {
+    console.log(
+      `🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`
+    );
+    // Background job: fire notifications for scheduled announcements as they go live.
+    startAnnouncementScheduler(io);
+  });
+}
+
+module.exports = server;

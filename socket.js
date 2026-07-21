@@ -5,13 +5,34 @@ const User = require("./models/User");
 const Notification = require("./models/Notification");
 const { sendNotification } = require("./utils/notificationHelper");
 
-const onlineUsers = new Map();
+const initializeSocket = (io, realtimeReady = Promise.resolve()) => {
+  const getOnlineUserIds = async () => {
+    // fetchSockets() uses the configured Socket.IO adapter, so this includes
+    // users connected to other Vercel Function instances on MongoDB Atlas.
+    const sockets = await io.fetchSockets();
+    return [
+      ...new Set(
+        sockets.map((connectedSocket) => connectedSocket.data.userId).filter(Boolean)
+      ),
+    ];
+  };
 
-const getOnlineUserIds = () => Array.from(onlineUsers.keys());
+  const broadcastPresence = async () => {
+    try {
+      io.emit("presence:update", await getOnlineUserIds());
+    } catch (error) {
+      console.error("Socket presence update error:", error.message);
+    }
+  };
 
-const initializeSocket = (io) => {
   // Authentication middleware
   io.use(async (socket, next) => {
+    try {
+      await realtimeReady;
+    } catch {
+      return next(new Error("Realtime service unavailable"));
+    }
+
     try {
       const token = socket.handshake.auth?.token || socket.handshake.query?.token;
 
@@ -35,13 +56,13 @@ const initializeSocket = (io) => {
 
   io.on("connection", async (socket) => {
     const userId = socket.user._id.toString();
-    onlineUsers.set(userId, socket.id);
+    socket.data.userId = userId;
     
     // Join personal room for notifications and direct events
     socket.join(`user:${userId}`);
     
     // Broadcast presence update
-    io.emit("presence:update", getOnlineUserIds());
+    await broadcastPresence();
 
     // Join rooms for all user's conversations (direct and group)
     const conversations = await Conversation.find({
@@ -53,8 +74,12 @@ const initializeSocket = (io) => {
     });
 
     // --- Presence ---
-    socket.on("presence:get", () => {
-      socket.emit("presence:update", getOnlineUserIds());
+    socket.on("presence:get", async () => {
+      try {
+        socket.emit("presence:update", await getOnlineUserIds());
+      } catch (error) {
+        console.error("Socket presence lookup error:", error.message);
+      }
     });
 
     // --- Conversations ---
@@ -234,8 +259,7 @@ const initializeSocket = (io) => {
 
     // --- Disconnect ---
     socket.on("disconnect", () => {
-      onlineUsers.delete(userId);
-      io.emit("presence:update", getOnlineUserIds());
+      void broadcastPresence();
     });
   });
 };
