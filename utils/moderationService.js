@@ -5,9 +5,8 @@
 //      (requires the OpenAI account to have billing enabled)
 //   2. Groq: gpt-oss-safeguard-20b for text,
 //      llama-4-scout (vision) as image safety judge
-// If no provider is reachable the upload is allowed but marked "skipped"
-// so admins can review it later (fail-open: an API outage must not block
-// every student upload).
+// If no provider is reachable the upload is marked unavailable. Callers must
+// fail safe: hold user submissions for review or reject staff publishing.
 
 const OpenAI = require("openai");
 
@@ -18,7 +17,7 @@ const OPENAI_THRESHOLDS = {
   sexual: 0.5,
   "sexual/minors": 0.02,
   violence: 0.78,
-  "violence/graphic": 0.55,
+  "violence/graphic": 0.3,
   hate: 0.55,
   "hate/threatening": 0.35,
   harassment: 0.78,
@@ -56,27 +55,34 @@ Classify the given content as UNSAFE if it contains any of:
 - "self-harm content": encouragement or instructions for self-harm or suicide
 - "illicit activity": instructions for weapons, drugs, or serious crimes
 
-Educational material (anatomy diagrams, medical or biology content, history, law, art) is SAFE.
+Educational context may make non-graphic discussions or diagrams safe. Visible gore,
+open wounds, mutilation, severe injury, exposed tissue, or graphic surgery is always
+UNSAFE and must be classified as "graphic violence", even in medical material.
 
 Respond with ONLY a JSON object, no other text:
 {"unsafe": true|false, "categories": ["..."]}
 The categories array must use only the quoted category names above and must be empty when safe.`;
 
 const parseJudgeVerdict = (raw) => {
-  const match = (raw || "").match(/\{[\s\S]*\}/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[0]);
-    if (typeof parsed.unsafe !== "boolean") return null;
-    return {
-      unsafe: parsed.unsafe,
-      categories: Array.isArray(parsed.categories)
-        ? parsed.categories.map(String)
-        : [],
-    };
-  } catch {
-    return null;
+  // Reasoning models may echo the requested schema before returning their
+  // final JSON. Parse every simple object and use the last valid verdict
+  // instead of greedily spanning from the first `{` to the last `}`.
+  const matches = (raw || "").match(/\{[^{}]*\}/g) || [];
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    try {
+      const parsed = JSON.parse(matches[index]);
+      if (typeof parsed.unsafe !== "boolean") continue;
+      return {
+        unsafe: parsed.unsafe,
+        categories: Array.isArray(parsed.categories)
+          ? parsed.categories.map(String)
+          : [],
+      };
+    } catch {
+      // Try an earlier object.
+    }
   }
+  return null;
 };
 
 // Deterministic keyword pre-filter, checked BEFORE any AI provider. The LLM
@@ -151,7 +157,7 @@ const keywordScan = (texts = []) => {
 
 const TEXT_CHUNK_CHARS = 6000;
 const MAX_TEXT_CHUNKS = 6;
-const IMAGES_PER_REQUEST = 2;
+const IMAGES_PER_REQUEST = 1;
 const PROVIDER_COOLDOWN_MS = 10 * 60 * 1000;
 const providerCooldownUntil = {};
 
@@ -223,17 +229,19 @@ const moderateWithGroq = async ({ texts, images }) => {
   });
   const textModel =
     process.env.GROQ_TEXT_GUARD_MODEL || "openai/gpt-oss-safeguard-20b";
-  const visionModel =
-    process.env.GROQ_VISION_GUARD_MODEL ||
-    "meta-llama/llama-4-scout-17b-16e-instruct";
+  // Groq retired the former Llama 4 Scout preview model. Do not silently use
+  // a stale default: vision is available only when an explicitly configured
+  // model is enabled for the account.
+  const visionModel = process.env.GROQ_VISION_GUARD_MODEL;
 
   const flaggedCategories = new Set();
-  let judged = false;
+  let textRequested = false;
+  let textJudged = false;
+  let imagesJudged = 0;
   let lastError = null;
 
   const applyVerdict = (verdict) => {
-    if (!verdict) return;
-    judged = true;
+    if (!verdict) return false;
     if (verdict.unsafe) {
       for (const c of verdict.categories.length
         ? verdict.categories
@@ -241,10 +249,12 @@ const moderateWithGroq = async ({ texts, images }) => {
         flaggedCategories.add(c);
       }
     }
+    return true;
   };
 
   const joinedText = chunkTexts(texts).join("\n").slice(0, TEXT_CHUNK_CHARS);
   if (joinedText) {
+    textRequested = true;
     try {
       const completion = await client.chat.completions.create({
         model: textModel,
@@ -255,7 +265,9 @@ const moderateWithGroq = async ({ texts, images }) => {
         max_tokens: 512,
         temperature: 0,
       });
-      applyVerdict(parseJudgeVerdict(completion.choices?.[0]?.message?.content));
+      textJudged = applyVerdict(
+        parseJudgeVerdict(completion.choices?.[0]?.message?.content)
+      );
     } catch (error) {
       // A failed text judge shouldn't discard image verdicts (and vice versa).
       // We only throw at the end if NOTHING was judged.
@@ -267,6 +279,9 @@ const moderateWithGroq = async ({ texts, images }) => {
   // Vision judge: one image per request keeps Scout reliable.
   for (const image of images) {
     try {
+      if (!visionModel) {
+        throw new Error("Groq vision moderation model is not configured");
+      }
       const completion = await client.chat.completions.create({
         model: visionModel,
         messages: [
@@ -278,21 +293,42 @@ const moderateWithGroq = async ({ texts, images }) => {
             ],
           },
         ],
-        max_tokens: 256,
+        max_tokens: 512,
         temperature: 0,
+        reasoning_effort: "none",
+        response_format: { type: "json_object" },
       });
-      applyVerdict(parseJudgeVerdict(completion.choices?.[0]?.message?.content));
+      if (
+        applyVerdict(
+          parseJudgeVerdict(completion.choices?.[0]?.message?.content)
+        )
+      ) {
+        imagesJudged += 1;
+      }
     } catch (error) {
       lastError = error;
       console.error("Groq vision judge failed for an image:", error.message);
+      if ([401, 403, 429].includes(error.status)) break;
     }
   }
 
-  if (!judged) {
-    // Surface the underlying status (401/403/429) so the provider cooldown in
-    // moderateContent can trip instead of paying the failure on every upload.
+  const incomplete =
+    (textRequested && !textJudged) || imagesJudged !== images.length;
+  if (incomplete) {
+    // A clean verdict is valid only when every requested modality was checked.
+    // This prevents a successful text judgment from hiding a failed PDF/image
+    // vision scan. A positive partial verdict remains useful because callers
+    // will hold/reject it anyway.
+    if (flaggedCategories.size > 0) {
+      return {
+        flagged: true,
+        categories: [...flaggedCategories],
+        provider: "groq",
+        status: "checked",
+      };
+    }
     if (lastError) throw lastError;
-    throw new Error("Groq safety judges returned no parseable verdicts");
+    throw new Error("Groq safety judges did not check every requested input");
   }
 
   return {
@@ -303,8 +339,67 @@ const moderateWithGroq = async ({ texts, images }) => {
   };
 };
 
+const moderateWithHuggingFace = async ({ texts, images }) => {
+  const apiKey =
+    process.env.HUGGINGFACE_API_KEY ||
+    process.env.HUGGINGFACE_HUB_TOKEN ||
+    process.env.HF_TOKEN;
+  const client = new OpenAI({
+    apiKey,
+    baseURL: "https://router.huggingface.co/v1",
+    maxRetries: 0,
+  });
+  const model =
+    process.env.HUGGINGFACE_VISION_MODEL || "zai-org/GLM-4.5V";
+  const flaggedCategories = new Set();
+  const inputs = [];
+  const joinedText = chunkTexts(texts).join("\n").slice(0, TEXT_CHUNK_CHARS);
+
+  if (joinedText) inputs.push([{ type: "text", text: joinedText }]);
+  for (const image of images) {
+    inputs.push([
+      { type: "text", text: "Classify this image using the safety policy." },
+      { type: "image_url", image_url: { url: image.dataUrl } },
+    ]);
+  }
+
+  for (const input of inputs) {
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: "system", content: SAFETY_POLICY },
+        { role: "user", content: input },
+      ],
+      max_tokens: 512,
+      temperature: 0,
+      response_format: { type: "json_object" },
+    });
+    const verdict = parseJudgeVerdict(
+      completion.choices?.[0]?.message?.content
+    );
+    if (!verdict) {
+      throw new Error("Hugging Face safety judge returned no parseable verdict");
+    }
+    if (verdict.unsafe) {
+      for (const category of verdict.categories.length
+        ? verdict.categories
+        : ["unsafe content"]) {
+        flaggedCategories.add(category);
+      }
+    }
+  }
+
+  return {
+    flagged: flaggedCategories.size > 0,
+    categories: [...flaggedCategories],
+    provider: "huggingface",
+    status: "checked",
+  };
+};
+
 /**
  * @param {{texts?: string[], images?: {dataUrl: string, label?: string}[]}} content
+ * A clean `checked` result guarantees all requested text and images were judged.
  * @returns {Promise<{flagged: boolean, categories: string[], provider: string|null, status: "checked"|"unavailable"}>}
  */
 const moderateContent = async ({ texts = [], images = [] }) => {
@@ -330,11 +425,18 @@ const moderateContent = async ({ texts = [], images = [] }) => {
   }
 
   const providers = [];
-  if (process.env.OPENAI_API_KEY) {
-    providers.push({ name: "openai", run: moderateWithOpenAI });
-  }
   if (process.env.GROQ_API_KEY) {
     providers.push({ name: "groq", run: moderateWithGroq });
+  }
+  if (
+    process.env.HUGGINGFACE_API_KEY ||
+    process.env.HUGGINGFACE_HUB_TOKEN ||
+    process.env.HF_TOKEN
+  ) {
+    providers.push({ name: "huggingface", run: moderateWithHuggingFace });
+  }
+  if (process.env.OPENAI_API_KEY) {
+    providers.push({ name: "openai", run: moderateWithOpenAI });
   }
 
   for (const provider of providers) {
@@ -353,9 +455,10 @@ const moderateContent = async ({ texts = [], images = [] }) => {
         `Moderation provider ${provider.name} failed:`,
         error.message
       );
-      // Quota/auth failures won't fix themselves between uploads — skip the
-      // provider for a while instead of paying the failure on every upload.
-      if ([401, 403, 429].includes(error.status)) {
+      // Auth failures apply to the whole provider. A 429 may be scoped to one
+      // model (for example Groq vision TPD while its text guard still works),
+      // so a provider-wide cooldown would incorrectly disable text scanning.
+      if ([401, 403].includes(error.status)) {
         providerCooldownUntil[provider.name] = Date.now() + PROVIDER_COOLDOWN_MS;
       }
     }

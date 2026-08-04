@@ -6,6 +6,7 @@ const {
   notifyModerators,
 } = require("../utils/notificationHelper");
 const { screenPost } = require("../utils/postModeration");
+const { shouldHoldForReview } = require("../utils/moderationPolicy");
 const { semanticPaginatedFind } = require("../utils/semanticSearch");
 
 const statusLabels = {
@@ -85,7 +86,7 @@ exports.createItem = async (req, res) => {
 
     // Anything else that's flagged — or that couldn't be auto-checked — is held
     // unpublished for an admin/moderator to review instead of being blocked.
-    const heldForReview = verdict.flagged || verdict.status !== "checked";
+    const heldForReview = shouldHoldForReview(verdict);
 
     const lostFoundItem = await LostFoundItem.create({
       type,
@@ -303,7 +304,7 @@ exports.updateItem = async (req, res) => {
         });
       }
       // An edit that introduces flagged/unscannable content is held for review.
-      if (verdict.flagged || verdict.status !== "checked") {
+      if (shouldHoldForReview(verdict)) {
         item.approved = false;
         item.approvedBy = undefined;
         item.approvedAt = undefined;
