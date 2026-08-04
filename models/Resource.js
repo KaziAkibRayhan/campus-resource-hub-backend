@@ -107,6 +107,16 @@ const resourceSchema = new mongoose.Schema(
       provider: String,
       checkedAt: Date,
     },
+    knowledge: {
+      status: {
+        type: String,
+        enum: ["pending", "ready", "empty", "failed"],
+        default: "pending",
+      },
+      chunkCount: { type: Number, default: 0 },
+      indexedAt: Date,
+      hasImageDescriptions: { type: Boolean, default: false },
+    },
     downloads: {
       type: Number,
       default: 0,

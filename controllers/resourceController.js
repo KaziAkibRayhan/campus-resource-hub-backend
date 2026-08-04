@@ -16,6 +16,7 @@ const {
   describeCategories,
 } = require("../utils/moderationService");
 const { shouldHoldForReview } = require("../utils/moderationPolicy");
+const { scheduleResourceKnowledge } = require("../utils/resourceKnowledge");
 
 const CONTENT_TYPES_BY_FORMAT = {
   pdf: "application/pdf",
@@ -342,6 +343,12 @@ exports.uploadResource = async (req, res) => {
       approvedAt: heldForReview ? undefined : Date.now(),
     });
     createdResourceId = resource._id;
+
+    // Build searchable file chunks asynchronously. Upload response stays fast;
+    // visibility checks in the assistant still come from the Resource record.
+    scheduleResourceKnowledge(resource._id, extraction, {
+      describeImages: !heldForReview,
+    });
 
     // Populate uploader info
     await resource.populate("uploadedBy", "name email studentId");
@@ -716,6 +723,7 @@ exports.deleteResource = async (req, res) => {
     }
 
     await resource.deleteOne();
+    await require("../models/ResourceChunk").deleteMany({ resource: resource._id });
 
     res.status(200).json({
       success: true,
