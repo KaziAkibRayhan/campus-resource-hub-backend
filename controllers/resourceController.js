@@ -15,6 +15,7 @@ const {
   moderateContent,
   describeCategories,
 } = require("../utils/moderationService");
+const { shouldHoldForReview } = require("../utils/moderationPolicy");
 
 const CONTENT_TYPES_BY_FORMAT = {
   pdf: "application/pdf",
@@ -294,7 +295,9 @@ exports.uploadResource = async (req, res) => {
     // defeat the safety pipeline, so it goes to the same human review queue
     // instead — fail safe, not fail open.
     const moderationFailed = verdict.status !== "checked";
-    const heldForReview = verdict.flagged || moderationFailed;
+    const heldForReview = shouldHoldForReview(verdict, {
+      extractionPartial: extraction.partial,
+    });
 
     const moderation = {
       status:
@@ -348,7 +351,9 @@ exports.uploadResource = async (req, res) => {
       // can review it. The uploader is told it's under review in the response.
       const reviewReason = verdict.flagged
         ? `was flagged for ${describeCategories(verdict.categories)}`
-        : "could not be automatically safety-checked";
+        : extraction.partial
+          ? "could only be partially safety-checked"
+          : "could not be automatically safety-checked";
       await notifyModerators(req.io, {
         title: "Resource needs review",
         message: `${req.user.name}'s upload "${resource.title}" ${reviewReason} and is awaiting review.`,
@@ -635,23 +640,35 @@ exports.updateResource = async (req, res) => {
       });
     }
 
-    resource = await Resource.findByIdAndUpdate(
-      req.params.id,
-      {
-        title,
-        description,
-        course,
-        department,
-        semester,
-        approved: true,
-        rejectionReason: undefined,
-      },
-      { new: true, runValidators: true }
-    ).populate("uploadedBy", "name email studentId");
+    if (verdict.status !== "checked") {
+      resource.approved = false;
+      resource.approvedBy = undefined;
+      resource.approvedAt = undefined;
+      resource.moderation = {
+        status: "skipped",
+        flagged: true,
+        categories: [],
+        provider: verdict.provider || undefined,
+        checkedAt: new Date(),
+      };
+    }
+
+    resource.title = title;
+    resource.description = description;
+    resource.course = course;
+    resource.department = department;
+    resource.semester = semester;
+    resource.rejectionReason = undefined;
+    await resource.save();
+    await resource.populate("uploadedBy", "name email studentId");
 
     res.status(200).json({
       success: true,
-      message: "Resource updated successfully.",
+      code: verdict.status === "checked" ? undefined : "UNDER_REVIEW",
+      message:
+        verdict.status === "checked"
+          ? "Resource updated successfully."
+          : "Resource updated and sent for safety review.",
       resource,
     });
   } catch (error) {

@@ -129,7 +129,8 @@ const isCsamVerdict = (verdict) =>
  * Hard-block gate. Used by announcements/events/clubs (staff-created): flagged
  * content is rejected outright and never stored.
  *
- * Fails open: if the moderation provider is unavailable the post is allowed.
+ * Fails closed: if the moderation provider is unavailable the post is blocked
+ * until safety checking is restored.
  *
  * @returns {Promise<null | { message: string, categories: string[] }>}
  *          null when clean; rejection payload when flagged
@@ -137,6 +138,15 @@ const isCsamVerdict = (verdict) =>
 const moderatePost = async (options = {}) => {
   const { texts, images } = await collectContent(options);
   const verdict = await moderateContent({ texts, images });
+
+  if (verdict.status !== "checked") {
+    return {
+      message:
+        "Post could not be safety-checked right now. Please try again later.",
+      categories: [],
+      code: "MODERATION_UNAVAILABLE",
+    };
+  }
 
   if (verdict.flagged) {
     return {

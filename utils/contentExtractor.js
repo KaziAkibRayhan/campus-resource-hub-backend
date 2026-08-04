@@ -134,6 +134,11 @@ const extractPdf = async (buffer) => {
           });
         }
       }
+      if ((shots?.total || 0) > MAX_PDF_PAGES_RENDERED) {
+        // Text is still extracted from all pages, but pages beyond this limit
+        // were not fully rendered for vision moderation.
+        result.partial = true;
+      }
     } catch {
       result.partial = true;
     }
@@ -158,6 +163,7 @@ const extractPdf = async (buffer) => {
         }
       }
       candidates.sort((a, b) => b.size - a.size);
+      const remainingImageLimit = 5;
       for (const candidate of candidates) {
         if (result.images.length >= MAX_PDF_PAGES_RENDERED + 5) break;
         result.images.push({
@@ -165,6 +171,7 @@ const extractPdf = async (buffer) => {
           label: candidate.label,
         });
       }
+      if (candidates.length > remainingImageLimit) result.partial = true;
     } catch {
       result.partial = true;
     }
@@ -198,7 +205,7 @@ const extractZipImages = (zip, mediaPrefixes) => {
     const dataUrl = normalizeImageBuffer(entry.getData(), mime);
     if (dataUrl) images.push({ dataUrl, label: entry.entryName });
   }
-  return images;
+  return { images, truncated: candidates.length > MAX_IMAGES };
 };
 
 const extractOfficeZip = async (buffer, kind) => {
@@ -233,7 +240,9 @@ const extractOfficeZip = async (buffer, kind) => {
           result.partial = true;
         }
       }
-      result.images.push(...extractZipImages(zip, ["word/media/"]));
+      const media = extractZipImages(zip, ["word/media/"]);
+      result.images.push(...media.images);
+      if (media.truncated) result.partial = true;
     } else if (kind === "PPTX") {
       const slideTexts = [];
       for (const entry of zip.getEntries()) {
@@ -252,7 +261,9 @@ const extractOfficeZip = async (buffer, kind) => {
       }
       const joined = slideTexts.filter(Boolean).join("\n");
       if (joined) result.texts.push(joined.slice(0, MAX_TEXT_CHARS));
-      result.images.push(...extractZipImages(zip, ["ppt/media/"]));
+      const media = extractZipImages(zip, ["ppt/media/"]);
+      result.images.push(...media.images);
+      if (media.truncated) result.partial = true;
     } else if (kind === "XLSX") {
       const entry = zip.getEntry("xl/sharedStrings.xml");
       if (entry) {
@@ -263,7 +274,9 @@ const extractOfficeZip = async (buffer, kind) => {
           )
         );
       }
-      result.images.push(...extractZipImages(zip, ["xl/media/"]));
+      const media = extractZipImages(zip, ["xl/media/"]);
+      result.images.push(...media.images);
+      if (media.truncated) result.partial = true;
     }
   } catch {
     result.partial = true;
