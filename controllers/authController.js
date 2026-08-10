@@ -279,6 +279,9 @@ exports.forgotPassword = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error sending password reset code",
+      code: error.code === "EMAIL_DELIVERY_FAILED" ? error.code : undefined,
+      deliveryFailures:
+        error.code === "EMAIL_DELIVERY_FAILED" ? error.deliveryFailures : undefined,
     });
   }
 };

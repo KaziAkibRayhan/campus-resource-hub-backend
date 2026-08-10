@@ -2,6 +2,20 @@ const nodemailer = require("nodemailer");
 
 let transporter;
 
+const providerFailure = (provider, error) => ({
+  provider,
+  code: String(error?.code || error?.name || "UNKNOWN").replace(/[^A-Z0-9_-]/gi, "_"),
+});
+
+const deliveryError = (failures) => {
+  const error = new Error("All configured email providers failed");
+  error.code = "EMAIL_DELIVERY_FAILED";
+  // Provider names and stable error codes are safe to expose for operational
+  // diagnosis; credentials and upstream response bodies are deliberately kept out.
+  error.deliveryFailures = failures;
+  return error;
+};
+
 const getTransporter = () => {
   if (transporter) return transporter;
 
@@ -132,7 +146,7 @@ const sendEmail = async ({ to, subject, text, html }) => {
     try {
       return await sendViaSendGrid({ to, subject, text, html });
     } catch (error) {
-      failures.push(`SendGrid: ${error.message}`);
+      failures.push(providerFailure("sendgrid", error));
       console.warn("SendGrid email failed; trying the next configured provider");
     }
   }
@@ -145,7 +159,7 @@ const sendEmail = async ({ to, subject, text, html }) => {
     try {
       return await sendViaGmailApi({ to, subject, text, html });
     } catch (error) {
-      failures.push(`Gmail API: ${error.message}`);
+      failures.push(providerFailure("gmail_api", error));
       console.warn("Gmail API email failed; trying SMTP fallback");
     }
   }
@@ -159,7 +173,8 @@ const sendEmail = async ({ to, subject, text, html }) => {
       return { skipped: true };
     }
 
-    throw new Error("Email service is not configured");
+    failures.push({ provider: "smtp", code: "NOT_CONFIGURED" });
+    throw deliveryError(failures);
   }
 
   try {
@@ -171,8 +186,8 @@ const sendEmail = async ({ to, subject, text, html }) => {
       html,
     });
   } catch (error) {
-    failures.push(`SMTP: ${error.message}`);
-    throw new Error(`All configured email providers failed: ${failures.join(" | ")}`);
+    failures.push(providerFailure("smtp", error));
+    throw deliveryError(failures);
   }
 };
 
