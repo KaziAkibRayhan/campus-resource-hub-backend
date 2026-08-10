@@ -126,8 +126,15 @@ const sendViaGmailApi = async ({ to, subject, text, html }) => {
 };
 
 const sendEmail = async ({ to, subject, text, html }) => {
+  const failures = [];
+
   if (process.env.SENDGRID_API_KEY) {
-    return sendViaSendGrid({ to, subject, text, html });
+    try {
+      return await sendViaSendGrid({ to, subject, text, html });
+    } catch (error) {
+      failures.push(`SendGrid: ${error.message}`);
+      console.warn("SendGrid email failed; trying the next configured provider");
+    }
   }
 
   if (
@@ -135,7 +142,12 @@ const sendEmail = async ({ to, subject, text, html }) => {
     process.env.GMAIL_CLIENT_ID &&
     process.env.GMAIL_CLIENT_SECRET
   ) {
-    return sendViaGmailApi({ to, subject, text, html });
+    try {
+      return await sendViaGmailApi({ to, subject, text, html });
+    } catch (error) {
+      failures.push(`Gmail API: ${error.message}`);
+      console.warn("Gmail API email failed; trying SMTP fallback");
+    }
   }
 
   const activeTransporter = getTransporter();
@@ -150,13 +162,18 @@ const sendEmail = async ({ to, subject, text, html }) => {
     throw new Error("Email service is not configured");
   }
 
-  return activeTransporter.sendMail({
-    from,
-    to,
-    subject,
-    text,
-    html,
-  });
+  try {
+    return await activeTransporter.sendMail({
+      from,
+      to,
+      subject,
+      text,
+      html,
+    });
+  } catch (error) {
+    failures.push(`SMTP: ${error.message}`);
+    throw new Error(`All configured email providers failed: ${failures.join(" | ")}`);
+  }
 };
 
 const sendOtpEmail = async ({ to, otp, purpose }) => {
