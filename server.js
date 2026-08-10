@@ -21,9 +21,11 @@ const { startAnnouncementScheduler } = require("./utils/announcementScheduler");
 // Load environment variables
 dotenv.config();
 
-// Connect to MongoDB. Socket.IO and API requests wait for this promise when
-// Vercel also needs MongoDB for cross-instance realtime coordination.
+// Start connecting once per runtime instance. Database-backed route operations
+// still use this connection, but ordinary HTTP dispatch must not wait for the
+// Socket.IO adapter and its index setup.
 const databaseReady = connectDB();
+void databaseReady.catch(() => {});
 
 // Initialize Express app
 const app = express();
@@ -50,14 +52,9 @@ void realtimeReady.catch(() => {});
 initializeSocket(io, realtimeReady);
 
 // Middleware
-app.use(async (req, res, next) => {
-  try {
-    await realtimeReady;
-    req.io = io;
-    next();
-  } catch (error) {
-    next(error);
-  }
+app.use((req, res, next) => {
+  req.io = io;
+  next();
 });
 
 app.use(
