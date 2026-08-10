@@ -2,3 +2,5 @@
 .env
 .model-cache/
 tmp/
+.vercel/
+.env.local
