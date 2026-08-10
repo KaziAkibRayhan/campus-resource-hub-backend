@@ -1,5 +1,10 @@
 const mongoose = require("mongoose");
 
+// Route middleware explicitly awaits a usable connection. Disabling Mongoose
+// buffering prevents queries from silently hanging for 10 seconds when Atlas
+// is temporarily unreachable.
+mongoose.set("bufferCommands", false);
+
 // Vercel can reuse a Node.js instance across several invocations. Keep both the
 // resolved connection and an in-flight connection promise on globalThis so a
 // warm instance never creates duplicate MongoDB pools.

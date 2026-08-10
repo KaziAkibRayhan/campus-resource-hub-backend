@@ -29,6 +29,10 @@ void databaseReady.catch(() => {});
 
 // Initialize Express app
 const app = express();
+// Vercel terminates TLS and forwards the original client address. Express must
+// trust that first proxy hop so express-rate-limit can identify clients without
+// rejecting X-Forwarded-For / Forwarded headers.
+app.set("trust proxy", 1);
 const server = http.createServer(app);
 const allowedOrigins = [
   process.env.CLIENT_URL,
@@ -65,6 +69,20 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// A real health check must include Atlas, not just confirm that Express loaded.
+app.get("/api/health", async (req, res) => {
+  try {
+    await connectDB();
+    res.status(200).json({ success: true, database: "connected" });
+  } catch (error) {
+    res.status(503).json({
+      success: false,
+      database: "unavailable",
+      message: "Database is temporarily unavailable. Please retry shortly.",
+    });
+  }
+});
+
 app.use(
   "/api",
   rateLimit({
@@ -81,6 +99,23 @@ app.use(
     },
   })
 );
+
+// Vercel may create a fresh function instance with a new outbound IP. Await a
+// retryable Atlas connection before dispatching database-backed routes instead
+// of letting Mongoose buffer queries until they fail with an opaque 500.
+app.use("/api", async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error("API database readiness error:", error.message);
+    res.status(503).json({
+      success: false,
+      code: "DATABASE_UNAVAILABLE",
+      message: "Service is temporarily unavailable. Please retry shortly.",
+    });
+  }
+});
 
 // CORS configuration
 app.use(

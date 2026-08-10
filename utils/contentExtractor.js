@@ -21,7 +21,9 @@ const mammoth = require("mammoth");
 
 const MAX_TEXT_CHARS = 12000;
 const MAX_IMAGES = 8;
-const MAX_PDF_PAGES_RENDERED = 5;
+// Full-page PDF rasterization is the most memory-intensive upload step. Keep
+// Vercel serverless invocations lean while retaining the broader local scan.
+const MAX_PDF_PAGES_RENDERED = process.env.VERCEL ? 2 : 5;
 const MIN_IMAGE_BYTES = 4 * 1024; // ignore icons/bullets
 const MAX_IMAGE_BYTES = 2.5 * 1024 * 1024; // keep base64 under provider limits
 const MAX_DECODE_BYTES = 15 * 1024 * 1024; // don't decode absurdly large media

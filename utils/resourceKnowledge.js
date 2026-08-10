@@ -123,6 +123,14 @@ const indexResourceKnowledge = async (resourceId, extraction, options = {}) => {
 };
 
 const scheduleResourceKnowledge = (resourceId, extraction, options = {}) => {
+  // setImmediate work is not durable in a serverless function and retains the
+  // upload's extracted images/text after the HTTP response. Skip it on Vercel
+  // unless explicitly enabled; the backfill script remains the safe recovery
+  // path for pending resources.
+  if (process.env.VERCEL && process.env.ENABLE_BACKGROUND_INDEXING !== "1") {
+    console.log(`Resource knowledge indexing deferred (${resourceId})`);
+    return;
+  }
   setImmediate(() => indexResourceKnowledge(resourceId, extraction, options).catch(async (error) => {
     console.error(`Resource knowledge indexing failed (${resourceId}):`, error.message);
     const Resource = require("../models/Resource");
