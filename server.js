@@ -69,6 +69,34 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Error responses (rate limiting, database readiness, route validation) must
+// carry CORS headers too, otherwise browsers hide the real status/message and
+// surface an opaque "Failed to fetch" across the whole client.
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  })
+);
+
+app.use("/api", (req, res, next) => {
+  const startedAt = Date.now();
+  const requestId = req.get("x-request-id") || Math.random().toString(36).slice(2, 12);
+  res.setHeader("x-request-id", requestId);
+  res.on("finish", () => {
+    if (res.statusCode >= 400 || Date.now() - startedAt >= 3000) {
+      console.warn("API request completed", {
+        requestId,
+        method: req.method,
+        path: req.originalUrl,
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+  });
+  next();
+});
+
 // A real health check must include Atlas, not just confirm that Express loaded.
 app.get("/api/health", async (req, res) => {
   try {
@@ -90,7 +118,8 @@ app.use(
     // 300 was too low: the admin panel alone fires 8 requests per load, and a
     // single active user (navigation + AI search + notifications) can burn
     // through it in minutes — everything then 429s ("Failed to fetch ...").
-    max: 1500,
+    max: 3000,
+    skip: (req) => req.method === "OPTIONS" || req.path === "/health",
     standardHeaders: true,
     legacyHeaders: false,
     message: {
@@ -116,14 +145,6 @@ app.use("/api", async (req, res, next) => {
     });
   }
 });
-
-// CORS configuration
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-  })
-);
 
 // Routes
 app.use("/api/auth", require("./routes/authRoutes"));
@@ -166,12 +187,18 @@ app.use((req, res) => {
 // imports and owns the exported HTTP server instead.
 if (require.main === module) {
   const PORT = process.env.PORT || 5000;
-  server.listen(PORT, () => {
+  server.listen(PORT, async () => {
     console.log(
       `🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`
     );
-    // Background job: fire notifications for scheduled announcements as they go live.
-    startAnnouncementScheduler(io);
+    // Background jobs query MongoDB immediately. Wait for the same cached
+    // connection used by routes now that Mongoose buffering is disabled.
+    try {
+      await databaseReady;
+      startAnnouncementScheduler(io);
+    } catch (error) {
+      console.error("Announcement scheduler not started: database unavailable", error.message);
+    }
   });
 }
 

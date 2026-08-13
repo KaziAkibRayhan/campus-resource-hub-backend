@@ -9,6 +9,22 @@ const { semanticPaginatedFind } = require("../utils/semanticSearch");
 
 const canModerate = (user) => user && ["admin", "moderator"].includes(user.role);
 
+const CATEGORY_CACHE_TTL_MS = 60_000;
+let categoryCache = { expiresAt: 0, values: [] };
+
+const getClubCategories = async () => {
+  if (categoryCache.expiresAt > Date.now()) return categoryCache.values;
+  const values = (await Club.distinct("category", { approved: true }))
+    .filter(Boolean)
+    .sort();
+  categoryCache = { values, expiresAt: Date.now() + CATEGORY_CACHE_TTL_MS };
+  return values;
+};
+
+const invalidateClubCategories = () => {
+  categoryCache.expiresAt = 0;
+};
+
 const idOf = (ref) =>
   ref && (ref._id ? ref._id.toString() : ref.toString ? ref.toString() : "");
 
@@ -79,14 +95,14 @@ exports.getClubs = async (req, res) => {
       });
 
       if (semanticResult) {
-        const categories = await Club.distinct("category", { approved: true });
+        const categories = await getClubCategories();
         return res.status(200).json({
           success: true,
           count: semanticResult.docs.length,
           total: semanticResult.total,
           totalPages: Math.ceil(semanticResult.total / perPage),
           currentPage: pageNum,
-          categories: categories.filter(Boolean).sort(),
+          categories,
           clubs: semanticResult.docs.map((c) => shapeClub(c, req.user)),
           semantic: true,
         });
@@ -104,7 +120,7 @@ exports.getClubs = async (req, res) => {
         .limit(perPage)
         .lean(),
       Club.countDocuments(query),
-      Club.distinct("category", { approved: true }),
+      getClubCategories(),
     ]);
 
     res.status(200).json({
@@ -113,7 +129,7 @@ exports.getClubs = async (req, res) => {
       total,
       totalPages: Math.ceil(total / perPage),
       currentPage: pageNum,
-      categories: categories.filter(Boolean).sort(),
+      categories,
       clubs: clubs.map((c) => shapeClub(c, req.user)),
     });
   } catch (error) {
@@ -178,6 +194,7 @@ exports.createClub = async (req, res) => {
       members: [{ user: req.user._id, role: "officer" }],
       approved: true,
     });
+    invalidateClubCategories();
 
     broadcastNotification(req.io, {
       excludeUser: req.user._id,
@@ -238,6 +255,7 @@ exports.updateClub = async (req, res) => {
     if (category) club.category = category;
     if (joinPolicy) club.joinPolicy = joinPolicy === "request" ? "request" : "open";
     await club.save();
+    if (category) invalidateClubCategories();
 
     req.io?.emit("club:updated", { clubId: club._id, ...shapeClub(club, null) });
 
@@ -535,6 +553,7 @@ exports.deleteClub = async (req, res) => {
     }
 
     await club.deleteOne();
+    invalidateClubCategories();
     req.io?.emit("club:deleted", { _id: club._id });
     res.status(200).json({ success: true, message: "Club deleted" });
   } catch (error) {
