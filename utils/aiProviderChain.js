@@ -1,6 +1,6 @@
 // backend/utils/aiProviderChain.js
 // Shared chat-LLM provider chain, tried in the order declared below:
-//   Groq → Hugging Face → Cerebras → OpenRouter → OpenAI
+//   Groq → Hugging Face → Cerebras → OpenRouter → Gemini → OpenAI
 // Each provider may have several keys configured — see utils/apiKeyPool — and
 // the chain is flattened to one attempt per key, so an exhausted free tier
 // moves to the next key of the same provider before changing provider. A key
@@ -45,6 +45,14 @@ const PROVIDERS = [
     // reasoning ("Here's a thinking process:") as the answer.
     model: () =>
       process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-nano-30b-a3b:free",
+  },
+  {
+    provider: "gemini",
+    envNames: ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
+    // Google exposes an OpenAI-compatible surface alongside its own SDK; the
+    // trailing slash matters, the client appends "chat/completions" to it.
+    baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    model: () => process.env.GEMINI_MODEL || "gemini-2.5-flash",
   },
   {
     provider: "openai",
