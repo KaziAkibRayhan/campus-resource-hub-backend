@@ -897,10 +897,10 @@ exports.askHubAssistant = async (req, res) => {
   try {
     const question = (req.body.question || "").trim();
 
-    if (question.length < 2) {
+    if (question.length < 3) {
       return res.status(400).json({
         success: false,
-        message: "Question must be at least 2 characters",
+        message: "Question must be at least 3 characters",
       });
     }
 
@@ -1031,8 +1031,8 @@ exports.streamHubAssistant = async (req, res) => {
 
   try {
     const question = (req.body.question || "").trim();
-    if (question.length < 2) {
-      send("error", { message: "Question must be at least 2 characters" });
+    if (question.length < 3) {
+      send("error", { message: "Question must be at least 3 characters" });
       return res.end();
     }
 
