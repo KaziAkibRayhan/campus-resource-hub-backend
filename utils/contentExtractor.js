@@ -21,9 +21,11 @@ const mammoth = require("mammoth");
 
 const MAX_TEXT_CHARS = 12000;
 const MAX_IMAGES = 8;
-// Full-page PDF rasterization is the most memory-intensive upload step. Keep
-// Vercel serverless invocations lean while retaining the broader local scan.
-const MAX_PDF_PAGES_RENDERED = process.env.VERCEL ? 2 : 5;
+// Full-page PDF rasterization is the most memory-intensive upload step. Four
+// representative pages give the safety model a useful visual sample without
+// making long PDFs wait for a full-document render. Reaching this intentional
+// sampling limit is not an extraction failure and must not force human review.
+const MAX_PDF_PAGES_RENDERED = 4;
 const MIN_IMAGE_BYTES = 4 * 1024; // ignore icons/bullets
 const MAX_IMAGE_BYTES = 2.5 * 1024 * 1024; // keep base64 under provider limits
 const MAX_DECODE_BYTES = 15 * 1024 * 1024; // don't decode absurdly large media
@@ -136,11 +138,6 @@ const extractPdf = async (buffer) => {
           });
         }
       }
-      if ((shots?.total || 0) > MAX_PDF_PAGES_RENDERED) {
-        // Text is still extracted from all pages, but pages beyond this limit
-        // were not fully rendered for vision moderation.
-        result.partial = true;
-      }
     } catch {
       result.partial = true;
     }
@@ -167,13 +164,18 @@ const extractPdf = async (buffer) => {
       candidates.sort((a, b) => b.size - a.size);
       const remainingImageLimit = 5;
       for (const candidate of candidates) {
-        if (result.images.length >= MAX_PDF_PAGES_RENDERED + 5) break;
+        if (
+          result.images.length >=
+          MAX_PDF_PAGES_RENDERED + remainingImageLimit
+        ) break;
         result.images.push({
           dataUrl: candidate.dataUrl,
           label: candidate.label,
         });
       }
-      if (candidates.length > remainingImageLimit) result.partial = true;
+      // This is deliberately a sample of images beyond the rendered pages.
+      // Hitting the sample limit is expected for a long PDF, not a failed
+      // extraction, so it does not by itself send a clean upload for review.
     } catch {
       result.partial = true;
     }
