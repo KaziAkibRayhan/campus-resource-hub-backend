@@ -1,8 +1,9 @@
 // backend/utils/embeddingService.js
 // Local text-embedding service for semantic search. Runs a quantized
 // multilingual MiniLM (Bangla + English) via @xenova/transformers — no API
-// key, no per-request cost. The ~50MB ONNX model downloads from Hugging Face
-// on first use and is cached under TRANSFORMERS_CACHE_DIR (./.model-cache).
+// key, no per-request cost. The ~129MB model downloads from Hugging Face on
+// first use and is cached under TRANSFORMERS_CACHE_DIR (./.model-cache, or
+// /tmp/.model-cache on serverless).
 //
 // Failure philosophy: this service NEVER throws to callers. If the model
 // can't initialize (no internet, low memory, EMBEDDINGS_DISABLED=1) every
@@ -19,13 +20,55 @@ const MAX_INPUT_CHARS = 2000;
 // no route to huggingface.co) won't fix itself between requests.
 const INIT_RETRY_COOLDOWN_MS = 10 * 60 * 1000;
 
+// A serverless root filesystem is read-only, so ./.model-cache can never be
+// written there — the ~129MB download (113MB quantized ONNX + 16MB tokenizer)
+// would be repeated, and thrown away, on every retry. /tmp is writable and
+// survives across invocations on a warm instance, so a container pays the
+// download at most once.
+const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const CACHE_DIR =
+  process.env.TRANSFORMERS_CACHE_DIR ||
+  (IS_SERVERLESS ? "/tmp/.model-cache" : "./.model-cache");
+
+// How long a caller may block on this service. The model is an optimization —
+// a cold download must never hold an assistant request open, so on serverless
+// we hand back null fast and let the init keep warming in the background.
+// Off serverless (dev, backfill scripts) the first download is expected to
+// take a while, so the wait is effectively unbounded.
+const INIT_WAIT_MS = Number(
+  process.env.EMBEDDING_INIT_WAIT_MS || (IS_SERVERLESS ? 3000 : 180000)
+);
+const EMBED_WAIT_MS = Number(
+  process.env.EMBEDDING_WAIT_MS || (IS_SERVERLESS ? 5000 : 60000)
+);
+
 let pipelinePromise = null; // in-flight or resolved init; dedupes concurrent callers
 let unavailableUntil = 0;
+
+/**
+ * Await `promise`, but give up waiting after `ms` and resolve null instead.
+ * The promise itself is left running — an init that is merely slow still
+ * completes and serves the next caller.
+ */
+const waitAtMost = async (promise, ms, label) => {
+  let timer;
+  const result = await Promise.race([
+    promise,
+    new Promise((resolve) => {
+      timer = setTimeout(() => {
+        console.warn(`Embedding ${label} exceeded ${ms}ms — falling back to regex search`);
+        resolve(null);
+      }, ms);
+    }),
+  ]);
+  clearTimeout(timer);
+  return result;
+};
 
 const initPipeline = async () => {
   // @xenova/transformers is ESM-only; this app is CommonJS.
   const { pipeline, env } = await import("@xenova/transformers");
-  env.cacheDir = process.env.TRANSFORMERS_CACHE_DIR || "./.model-cache";
+  env.cacheDir = CACHE_DIR;
   env.allowLocalModels = false;
   return pipeline("feature-extraction", MODEL_ID, { quantized: true });
 };
@@ -52,13 +95,16 @@ const embedText = async (text) => {
   const clean = (text || "").trim();
   if (!clean) return null;
   const promise = getPipeline();
-  const extractor = promise && (await promise);
+  if (!promise) return null;
+  const extractor = await waitAtMost(promise, INIT_WAIT_MS, "model init");
   if (!extractor) return null;
   try {
-    const output = await extractor(clean.slice(0, MAX_INPUT_CHARS), {
-      pooling: "mean",
-      normalize: true,
-    });
+    const output = await waitAtMost(
+      extractor(clean.slice(0, MAX_INPUT_CHARS), { pooling: "mean", normalize: true }),
+      EMBED_WAIT_MS,
+      "inference"
+    );
+    if (!output) return null;
     return Array.from(output.data);
   } catch (error) {
     console.error("Embedding failed:", error.message);
