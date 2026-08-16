@@ -28,14 +28,6 @@ const PROVIDERS = [
     model: () => process.env.HUGGINGFACE_MODEL || "openai/gpt-oss-20b",
   },
   {
-    provider: "cerebras",
-    envNames: ["CEREBRAS_API_KEY"],
-    baseURL: "https://api.cerebras.ai/v1",
-    // Check GET /v1/models before changing this — Cerebras serves a short,
-    // shifting list and an unknown id returns 404, not a helpful message.
-    model: () => process.env.CEREBRAS_MODEL || "gpt-oss-120b",
-  },
-  {
     provider: "openrouter",
     envNames: ["OPENROUTER_API_KEY"],
     baseURL: "https://openrouter.ai/api/v1",
@@ -52,7 +44,16 @@ const PROVIDERS = [
     // Google exposes an OpenAI-compatible surface alongside its own SDK; the
     // trailing slash matters, the client appends "chat/completions" to it.
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-    model: () => process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    // Not every id in GET /models is reachable by every key — gemini-2.5-flash
+    // 404s on an AI Studio key that lists it. The -latest aliases resolve to
+    // whatever that key may actually call.
+    model: () => process.env.GEMINI_MODEL || "gemini-flash-latest",
+    // Gemini spends "thinking" tokens out of max_tokens before writing a
+    // single visible character, and neither reasoning_effort nor
+    // thinking_config could turn that off here. Measured ~112 thinking tokens
+    // on a one-line question, more as the prompt grows, so the shared budget
+    // would truncate its answers where it does not truncate anyone else's.
+    maxTokens: () => Number(process.env.GEMINI_MAX_TOKENS || 2000),
   },
   {
     provider: "openai",
@@ -76,6 +77,9 @@ const toConfigs = (spec, keys, allKeys) =>
     apiKey,
     baseURL: spec.baseURL,
     model: spec.model(),
+    // Undefined unless a provider needs its own budget; callers fall back to
+    // their shared default.
+    maxTokens: spec.maxTokens?.(),
   }));
 
 // Preferred provider first, everything else in declared order. Ranking rather

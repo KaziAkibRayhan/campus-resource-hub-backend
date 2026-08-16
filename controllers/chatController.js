@@ -957,7 +957,7 @@ exports.askHubAssistant = async (req, res) => {
         const completion = await openai.chat.completions.create({
           model: aiConfig.model,
           messages,
-          max_tokens: ASSISTANT_MAX_TOKENS,
+          max_tokens: aiConfig.maxTokens || ASSISTANT_MAX_TOKENS,
           temperature: 0.2,
         });
 
@@ -1084,7 +1084,7 @@ exports.streamHubAssistant = async (req, res) => {
           {
             model: aiConfig.model,
             messages,
-            max_tokens: ASSISTANT_MAX_TOKENS,
+            max_tokens: aiConfig.maxTokens || ASSISTANT_MAX_TOKENS,
             temperature: 0.2,
             stream: true,
           },
