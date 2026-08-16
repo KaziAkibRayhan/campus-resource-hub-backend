@@ -864,10 +864,10 @@ exports.searchHubInformation = async (req, res) => {
   try {
     const q = (req.query.q || "").trim();
 
-    if (q.length < 2) {
+    if (q.length < 3) {
       return res.status(400).json({
         success: false,
-        message: "Search text must be at least 2 characters",
+        message: "Search text must be at least 3 characters",
       });
     }
 
