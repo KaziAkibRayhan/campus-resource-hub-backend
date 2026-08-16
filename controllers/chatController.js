@@ -681,9 +681,22 @@ const buildAssistantSystemPrompt = (user) => [
 ].join(" ");
 
 // Shared by the buffered and streaming handlers so both stay in step.
-const buildAssistantMessages = ({ user, question, history, context, overviewContext }) => {
-  const closingInstruction = hasUnresolvedReference(question, history)
-    ? "The student used a pointing word but named no record, and no earlier turn identifies one, so the matched records above are only keyword guesses. Do NOT answer as if one of them is the record they meant. Say you are not sure which one they mean, list the closest titles as numbered options, and ask them to name one."
+const buildAssistantMessages = ({ user, question, history, results, overviewContext }) => {
+  const unresolved = hasUnresolvedReference(question, history);
+
+  // Telling a model not to describe the records it can see is unreliable —
+  // one provider obeyed, another described them anyway. So when we cannot
+  // tell which record was meant, it only gets the titles: there is nothing
+  // to summarize from, and the options it must offer are all that is left.
+  const context = unresolved
+    ? results
+        .slice(0, 8)
+        .map((item, index) => `[${index + 1}] ${item.title} (${item.type})`)
+        .join("\n")
+    : buildAssistantContext(results);
+
+  const closingInstruction = unresolved
+    ? "The student used a pointing word but named no record, and no earlier turn identifies one, so the titles above are only keyword guesses — you have NOT been given their contents and must not invent any. Say you are not sure which one they mean, list those titles as numbered options, and ask them to name one."
     : "Answer now, grounded in the records and overview above. Include page paths when helpful. If nothing matched, say so and then still help the student with the closest alternative or guidance.";
 
   return [
@@ -912,7 +925,6 @@ exports.askHubAssistant = async (req, res) => {
         return "";
       }),
     ]);
-    const context = buildAssistantContext(payload.results);
 
     const aiConfigs = getAvailableProviders();
 
@@ -929,7 +941,7 @@ exports.askHubAssistant = async (req, res) => {
       user: req.user,
       question,
       history,
-      context,
+      results: payload.results,
       overviewContext,
     });
 
@@ -1046,12 +1058,11 @@ exports.streamHubAssistant = async (req, res) => {
     // Let the UI render source cards while the model is still thinking.
     send("sources", { sources: payload.results.slice(0, 8), semantic: payload.semantic });
 
-    const context = buildAssistantContext(payload.results);
     const messages = buildAssistantMessages({
       user: req.user,
       question,
       history,
-      context,
+      results: payload.results,
       overviewContext,
     });
 
