@@ -1,13 +1,16 @@
 // backend/utils/aiProviderChain.js
-// Shared chat-LLM provider chain (Groq → HuggingFace → OpenAI). Each provider
-// may have several keys configured — see utils/apiKeyPool — and the chain is
-// flattened to one attempt per key, so an exhausted free tier moves to the
-// next key of the same provider before changing provider. A key that reports
-// 401/402/403/429 is benched for ten minutes instead of paying its failure on
-// every request.
+// Shared chat-LLM provider chain, tried in the order declared below:
+//   Groq → Hugging Face → Cerebras → OpenRouter → OpenAI
+// Each provider may have several keys configured — see utils/apiKeyPool — and
+// the chain is flattened to one attempt per key, so an exhausted free tier
+// moves to the next key of the same provider before changing provider. A key
+// that reports 401/402/403/429 is benched for ten minutes instead of paying
+// its failure on every request.
 //
-// A provider with no key configured simply drops out of the chain; that is how
-// OpenAI is removed, without touching this file.
+// Every provider here speaks the OpenAI chat-completions protocol, so adding
+// one is a base URL, a key variable and a default model. A provider with no
+// key configured simply drops out of the chain; that is how OpenAI is
+// removed, without touching this file.
 
 const { readKeys, readUsableKeys, benchKey } = require("./apiKeyPool");
 
@@ -23,6 +26,21 @@ const PROVIDERS = [
     envNames: ["HUGGINGFACE_API_KEY", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN"],
     baseURL: "https://router.huggingface.co/v1",
     model: () => process.env.HUGGINGFACE_MODEL || "openai/gpt-oss-20b",
+  },
+  {
+    provider: "cerebras",
+    envNames: ["CEREBRAS_API_KEY"],
+    baseURL: "https://api.cerebras.ai/v1",
+    model: () => process.env.CEREBRAS_MODEL || "llama-3.3-70b",
+  },
+  {
+    provider: "openrouter",
+    envNames: ["OPENROUTER_API_KEY"],
+    baseURL: "https://openrouter.ai/api/v1",
+    // OpenRouter's free model ids carry a ":free" suffix and are retired from
+    // time to time; override with OPENROUTER_MODEL when one disappears.
+    model: () =>
+      process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free",
   },
   {
     provider: "openai",
