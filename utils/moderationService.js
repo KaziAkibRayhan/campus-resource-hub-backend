@@ -1,10 +1,12 @@
 // backend/utils/moderationService.js
 // Decides whether extracted upload content (text + images) is safe.
-// Provider chain (both are free with existing keys):
-//   1. OpenAI omni-moderation-latest          — text + images, no token cost
-//      (requires the OpenAI account to have billing enabled)
-//   2. Groq: gpt-oss-safeguard-20b for text,
-//      llama-4-scout (vision) as image safety judge
+// Provider chain, in the order actually attempted:
+//   1. Groq: gpt-oss-safeguard-20b for text, a vision model as image judge
+//   2. Hugging Face Inference Providers — vision judge
+//   3. OpenAI omni-moderation-latest — text + images, no token cost, but it
+//      requires billing enabled on the account, so it is last
+// Each provider may have several keys; see utils/apiKeyPool. A provider with
+// no key configured is skipped, so removing OPENAI_API_KEY removes step 3.
 // If no provider is reachable the upload is marked unavailable. Callers must
 // fail safe: hold user submissions for review or reject staff publishing.
 
