@@ -32,3 +32,23 @@ test("partially extracted documents are held even after a clean verdict", () => 
     true
   );
 });
+
+test("a clean moderated PDF page sample can publish despite partial extraction", () => {
+  assert.equal(
+    shouldHoldForReview(
+      { flagged: false, status: "checked" },
+      { extractionPartial: true, hasModeratedVisualSample: true }
+    ),
+    false
+  );
+});
+
+test("a visual sample never overrides a harmful verdict", () => {
+  assert.equal(
+    shouldHoldForReview(
+      { flagged: true, status: "checked" },
+      { extractionPartial: true, hasModeratedVisualSample: true }
+    ),
+    true
+  );
+});

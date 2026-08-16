@@ -298,6 +298,11 @@ exports.uploadResource = async (req, res) => {
     const moderationFailed = verdict.status !== "checked";
     const heldForReview = shouldHoldForReview(verdict, {
       extractionPartial: extraction.partial,
+      // For PDFs, the first four rendered pages are the intentional safety
+      // sample. A clean provider verdict for that sample is enough to publish
+      // even if text or additional embedded-image extraction was incomplete.
+      hasModeratedVisualSample:
+        fileType === "PDF" && extraction.images.length > 0,
     });
 
     const moderation = {
