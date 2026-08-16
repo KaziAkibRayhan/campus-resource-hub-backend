@@ -14,6 +14,11 @@ const {
   getAvailableProviders,
   markProviderFailure,
 } = require("../utils/aiProviderChain");
+const {
+  getResourceFileTypeIntent,
+  typeMatchesRequestedCollection,
+  wantsLatestRecord,
+} = require("../utils/assistantQueryIntent");
 
 const getConversationForUser = async (conversationId, userId) =>
   Conversation.findOne({ _id: conversationId, members: userId });
@@ -146,6 +151,9 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
   const searchLimit = Math.min(parseInt(rawLimit, 10) || 5, 10);
   const requestedCollections = getRequestedCollections(q);
   const hasCollectionIntent = Object.values(requestedCollections).some(Boolean);
+  const resourceFileType = requestedCollections.resources
+    ? getResourceFileTypeIntent(q)
+    : null;
   const visibilityFilter = canModerate(user) ? {} : { approved: true };
   const resourceVisibilityFilter = canModerate(user)
     ? {}
@@ -155,11 +163,15 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
           { uploadedBy: user._id },
         ],
       };
+  const resourceIntentFilter = combineFilters(
+    resourceVisibilityFilter,
+    resourceFileType ? { fileType: resourceFileType } : {}
+  );
 
   // Search inside chunked file content first. Resource authorization is
   // resolved before chunk retrieval, so chunks can never reveal a hidden file.
   const visibleResourceIds = (
-    await Resource.find(resourceVisibilityFilter).select("_id").lean()
+    await Resource.find(resourceIntentFilter).select("_id").lean()
   ).map((resource) => resource._id);
   const knowledgeHits = await searchResourceKnowledge(q, visibleResourceIds, {
     limit: Math.max(searchLimit * 3, 12),
@@ -195,7 +207,7 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
     semantic,
   ] = await Promise.all([
     Resource.find(combineFilters(
-      resourceVisibilityFilter,
+      resourceIntentFilter,
       resourceSearchFilter
     ))
       .select("title description course department semester fileType uploadedBy createdAt +contentExcerpt")
@@ -262,7 +274,7 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
     browsedResources, browsedClubs, browsedAnnouncements, browsedEvents, browsedLostFound,
   ] = await Promise.all([
     requestedCollections.resources && resources.length === 0
-      ? Resource.find(resourceVisibilityFilter)
+      ? Resource.find(resourceIntentFilter)
           .select("title description course department semester fileType uploadedBy createdAt +contentExcerpt")
           .populate("uploadedBy", "name").sort({ createdAt: -1 }).limit(searchLimit).lean()
       : resources,
@@ -346,7 +358,7 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
       "resource",
       resources,
       Resource,
-      resourceVisibilityFilter,
+      resourceIntentFilter,
       "title description course department semester fileType uploadedBy createdAt +contentExcerpt",
       ["uploadedBy", "name"]
     ),
@@ -441,6 +453,7 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
             .slice(0, 5000)
         : resource.contentExcerpt?.slice(0, 3000),
       fileType: resource.fileType,
+      createdAt: resource.createdAt,
       knowledgeReady: Boolean(knowledgeByResource.get(String(resource._id))?.length),
       href: `/resources?highlight=${resource._id}`,
       score: scoreByKey.get(`resource:${resource._id}`) ?? 0.5,
@@ -500,7 +513,14 @@ const getHubSearchPayload = async (user, q, rawLimit = 5) => {
       href: null,
       score: 0.5,
     })),
-  ].sort((a, b) => b.score - a.score);
+  ]
+    .filter((item) => typeMatchesRequestedCollection(item.type, requestedCollections))
+    .sort((a, b) => {
+      if (requestedCollections.resources && wantsLatestRecord(q)) {
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      }
+      return b.score - a.score;
+    });
 
   return {
     resources: mergedResources,
