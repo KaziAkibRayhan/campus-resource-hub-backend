@@ -9,6 +9,7 @@
 // fail safe: hold user submissions for review or reject staff publishing.
 
 const OpenAI = require("openai");
+const { readKeys, firstUsableKey, benchKey } = require("./apiKeyPool");
 
 // Per-category score thresholds for omni-moderation. Slightly above the
 // API defaults for "sexual"/"violence" to tolerate academic content
@@ -176,7 +177,7 @@ const chunkTexts = (texts) => {
 
 const moderateWithOpenAI = async ({ texts, images }) => {
   const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: firstUsableKey("OPENAI_API_KEY"),
     maxRetries: 0, // fail fast to the next provider
   });
   const model = process.env.OPENAI_MODERATION_MODEL || "omni-moderation-latest";
@@ -224,7 +225,7 @@ const moderateWithOpenAI = async ({ texts, images }) => {
 
 const moderateWithGroq = async ({ texts, images }) => {
   const client = new OpenAI({
-    apiKey: process.env.GROQ_API_KEY,
+    apiKey: firstUsableKey("GROQ_API_KEY"),
     baseURL: "https://api.groq.com/openai/v1",
   });
   const textModel =
@@ -340,10 +341,11 @@ const moderateWithGroq = async ({ texts, images }) => {
 };
 
 const moderateWithHuggingFace = async ({ texts, images }) => {
-  const apiKey =
-    process.env.HUGGINGFACE_API_KEY ||
-    process.env.HUGGINGFACE_HUB_TOKEN ||
-    process.env.HF_TOKEN;
+  const apiKey = firstUsableKey(
+    "HUGGINGFACE_API_KEY",
+    "HUGGINGFACE_HUB_TOKEN",
+    "HF_TOKEN"
+  );
   const client = new OpenAI({
     apiKey,
     baseURL: "https://router.huggingface.co/v1",
@@ -425,18 +427,27 @@ const moderateContent = async ({ texts = [], images = [] }) => {
   }
 
   const providers = [];
-  if (process.env.GROQ_API_KEY) {
-    providers.push({ name: "groq", run: moderateWithGroq });
+  if (readKeys("GROQ_API_KEY").length) {
+    providers.push({
+      name: "groq",
+      run: moderateWithGroq,
+      currentKey: () => firstUsableKey("GROQ_API_KEY"),
+    });
   }
-  if (
-    process.env.HUGGINGFACE_API_KEY ||
-    process.env.HUGGINGFACE_HUB_TOKEN ||
-    process.env.HF_TOKEN
-  ) {
-    providers.push({ name: "huggingface", run: moderateWithHuggingFace });
+  if (readKeys("HUGGINGFACE_API_KEY", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN").length) {
+    providers.push({
+      name: "huggingface",
+      run: moderateWithHuggingFace,
+      currentKey: () =>
+        firstUsableKey("HUGGINGFACE_API_KEY", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN"),
+    });
   }
-  if (process.env.OPENAI_API_KEY) {
-    providers.push({ name: "openai", run: moderateWithOpenAI });
+  if (readKeys("OPENAI_API_KEY").length) {
+    providers.push({
+      name: "openai",
+      run: moderateWithOpenAI,
+      currentKey: () => firstUsableKey("OPENAI_API_KEY"),
+    });
   }
 
   for (const provider of providers) {
@@ -455,10 +466,14 @@ const moderateContent = async ({ texts = [], images = [] }) => {
         `Moderation provider ${provider.name} failed:`,
         error.message
       );
-      // Auth failures apply to the whole provider. A 429 may be scoped to one
-      // model (for example Groq vision TPD while its text guard still works),
-      // so a provider-wide cooldown would incorrectly disable text scanning.
-      if ([401, 403].includes(error.status)) {
+      // Bench the individual key so the next one for this provider is used;
+      // a spent free tier reports 402 or 429 and must not disqualify a
+      // sibling key. Returns false for errors that are not key problems.
+      benchKey(provider.currentKey(), error, `Moderation ${provider.name} key`);
+      // Auth failures apply to the whole provider only once no key is left.
+      // A 429 may be scoped to one model (Groq vision TPD while its text
+      // guard still works), so it must not disable text scanning provider-wide.
+      if ([401, 403].includes(error.status) && !provider.currentKey()) {
         providerCooldownUntil[provider.name] = Date.now() + PROVIDER_COOLDOWN_MS;
       }
     }

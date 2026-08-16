@@ -1,61 +1,83 @@
 // backend/utils/aiProviderChain.js
-// Shared chat-LLM provider chain (Groq → HuggingFace → OpenAI) with the same
-// 10-minute cooldown circuit breaker moderationService uses: a key that
-// 401/403/429s (the OpenAI key has no quota) is skipped for a while instead
-// of paying its failure on every single assistant request.
+// Shared chat-LLM provider chain (Groq → HuggingFace → OpenAI). Each provider
+// may have several keys configured — see utils/apiKeyPool — and the chain is
+// flattened to one attempt per key, so an exhausted free tier moves to the
+// next key of the same provider before changing provider. A key that reports
+// 401/402/403/429 is benched for ten minutes instead of paying its failure on
+// every request.
+//
+// A provider with no key configured simply drops out of the chain; that is how
+// OpenAI is removed, without touching this file.
 
-const PROVIDER_COOLDOWN_MS = 10 * 60 * 1000;
-const cooldownUntil = {};
+const { readKeys, readUsableKeys, benchKey } = require("./apiKeyPool");
 
-const getAIClientConfigs = () => {
+const PROVIDERS = [
+  {
+    provider: "groq",
+    envNames: ["GROQ_API_KEY"],
+    baseURL: "https://api.groq.com/openai/v1",
+    model: () => process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+  },
+  {
+    provider: "huggingface",
+    envNames: ["HUGGINGFACE_API_KEY", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN"],
+    baseURL: "https://router.huggingface.co/v1",
+    model: () => process.env.HUGGINGFACE_MODEL || "openai/gpt-oss-20b",
+  },
+  {
+    provider: "openai",
+    envNames: ["OPENAI_API_KEY"],
+    baseURL: undefined,
+    model: () => process.env.OPENAI_MODEL || "gpt-4.1-mini",
+  },
+];
+
+// `keys` is the subset to build configs for; `allKeys` is everything the
+// provider has configured, so a key keeps the same label once its siblings
+// are benched ("groq key 2/2" stays that, rather than becoming "groq").
+const toConfigs = (spec, keys, allKeys) =>
+  keys.map((apiKey) => ({
+    provider: spec.provider,
+    // Which key of this provider — for logs and diagnostics, never the key.
+    keyLabel:
+      allKeys.length > 1
+        ? `${spec.provider} key ${allKeys.indexOf(apiKey) + 1}/${allKeys.length}`
+        : spec.provider,
+    apiKey,
+    baseURL: spec.baseURL,
+    model: spec.model(),
+  }));
+
+// Preferred provider first, everything else in declared order. Ranking rather
+// than comparing the two sides keeps the comparator consistent — returning -1
+// for both sides when both are preferred reorders a provider's own keys.
+const byPreferredFirst = (configs) => {
   const preferredProvider = (process.env.AI_PROVIDER || "groq").toLowerCase();
-  const huggingFaceKey =
-    process.env.HUGGINGFACE_API_KEY ||
-    process.env.HUGGINGFACE_HUB_TOKEN ||
-    process.env.HF_TOKEN;
-
-  const configs = [
-    {
-      provider: "groq",
-      apiKey: process.env.GROQ_API_KEY,
-      baseURL: "https://api.groq.com/openai/v1",
-      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-    },
-    {
-      provider: "huggingface",
-      apiKey: huggingFaceKey,
-      baseURL: "https://router.huggingface.co/v1",
-      model: process.env.HUGGINGFACE_MODEL || "openai/gpt-oss-20b",
-    },
-    {
-      provider: "openai",
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: undefined,
-      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    },
-  ].filter((config) => config.apiKey);
-
-  return configs.sort((a, b) => {
-    if (a.provider === preferredProvider) return -1;
-    if (b.provider === preferredProvider) return 1;
-    return 0;
-  });
+  const rank = (config) => (config.provider === preferredProvider ? 0 : 1);
+  return configs.sort((a, b) => rank(a) - rank(b));
 };
 
-/** Provider configs minus the ones currently cooling down after auth/quota failures. */
-const getAvailableProviders = () =>
-  getAIClientConfigs().filter(
-    (config) => (cooldownUntil[config.provider] || 0) <= Date.now()
+const buildChain = (selectKeys) =>
+  byPreferredFirst(
+    PROVIDERS.flatMap((spec) => {
+      const allKeys = readKeys(...spec.envNames);
+      return toConfigs(spec, selectKeys(spec, allKeys), allKeys);
+    })
   );
 
-/** Call on a provider error; quota/auth failures put the provider on cooldown. */
-const markProviderFailure = (provider, error) => {
-  if ([401, 403, 429].includes(error?.status)) {
-    cooldownUntil[provider] = Date.now() + PROVIDER_COOLDOWN_MS;
-    console.warn(
-      `AI provider ${provider} on cooldown for 10 min (status ${error.status})`
-    );
-  }
-};
+/** Every configured (provider, key) attempt, preferred provider first. */
+const getAIClientConfigs = () => buildChain((spec, allKeys) => allKeys);
+
+/** As above, minus keys currently benched after auth/quota failures. */
+const getAvailableProviders = () =>
+  buildChain((spec) => readUsableKeys(...spec.envNames));
+
+/**
+ * Call on a provider error. Quota/auth failures bench that one key; the next
+ * key of the same provider is tried on the next pass.
+ * Accepts the config the attempt used.
+ */
+const markProviderFailure = (config, error) =>
+  benchKey(config?.apiKey, error, `AI provider ${config?.keyLabel || config?.provider}`);
 
 module.exports = { getAIClientConfigs, getAvailableProviders, markProviderFailure };

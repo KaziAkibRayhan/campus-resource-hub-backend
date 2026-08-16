@@ -1,6 +1,7 @@
 const OpenAI = require("openai");
 const ResourceChunk = require("../models/ResourceChunk");
 const { embedMany, embedText, cosineSim } = require("./embeddingService");
+const { firstUsableKey } = require("./apiKeyPool");
 
 const CHUNK_CHARS = 1200;
 const CHUNK_OVERLAP = 180;
@@ -33,19 +34,19 @@ const parseDescription = (raw = "") => cleanText(raw.replace(/<think>[\s\S]*?<\/
 const visionProviders = () => [
   {
     provider: "groq",
-    key: process.env.GROQ_API_KEY,
+    key: firstUsableKey("GROQ_API_KEY"),
     baseURL: "https://api.groq.com/openai/v1",
     model: process.env.GROQ_VISION_GUARD_MODEL || "qwen/qwen3.6-27b",
   },
   {
     provider: "huggingface",
-    key: process.env.HUGGINGFACE_API_KEY || process.env.HUGGINGFACE_HUB_TOKEN || process.env.HF_TOKEN,
+    key: firstUsableKey("HUGGINGFACE_API_KEY", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN"),
     baseURL: "https://router.huggingface.co/v1",
     model: process.env.HUGGINGFACE_VISION_MODEL || "zai-org/GLM-4.5V",
   },
   {
     provider: "openai",
-    key: process.env.OPENAI_API_KEY,
+    key: firstUsableKey("OPENAI_API_KEY"),
     baseURL: undefined,
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
   },

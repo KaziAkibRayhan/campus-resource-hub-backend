@@ -976,8 +976,8 @@ exports.askHubAssistant = async (req, res) => {
 
         failedProviders.push(aiConfig.provider);
       } catch (providerError) {
-        console.error(`${aiConfig.provider} assistant error:`, providerError.message);
-        markProviderFailure(aiConfig.provider, providerError);
+        console.error(`${aiConfig.keyLabel} assistant error:`, providerError.message);
+        markProviderFailure(aiConfig, providerError);
         failedProviders.push(aiConfig.provider);
       }
     }
@@ -1110,8 +1110,8 @@ exports.streamHubAssistant = async (req, res) => {
         }
         // Stream ended without content → safe to try the next provider.
       } catch (providerError) {
-        console.error(`${aiConfig.provider} stream error:`, providerError.message);
-        markProviderFailure(aiConfig.provider, providerError);
+        console.error(`${aiConfig.keyLabel} stream error:`, providerError.message);
+        markProviderFailure(aiConfig, providerError);
         if (streamed) {
           // Tokens already reached the client — close out, don't switch voices.
           send("done", {
