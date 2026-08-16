@@ -18,6 +18,12 @@ globalThis.Path2D ??= napiCanvas.Path2D;
 
 const AdmZip = require("adm-zip");
 const mammoth = require("mammoth");
+// Serverless bundles do not reliably discover pdf.js's worker at runtime.
+// Loading the package's worker entry explicitly and inlining its data keeps
+// PDF parsing/rendering self-contained in the Vercel function.
+const { CanvasFactory, getData: getPdfWorkerData } = require("pdf-parse/worker");
+const { PDFParse } = require("pdf-parse");
+PDFParse.setWorker(getPdfWorkerData());
 
 const MAX_TEXT_CHARS = 12000;
 const MAX_IMAGES = 8;
@@ -110,15 +116,18 @@ const fitDataUrl = (dataUrl) => {
 };
 
 const extractPdf = async (buffer) => {
-  const { PDFParse } = require("pdf-parse");
   const result = { texts: [], images: [], partial: false };
-  const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  const parser = new PDFParse({
+    data: new Uint8Array(buffer),
+    CanvasFactory,
+  });
 
   try {
     try {
       const text = await parser.getText();
       if (text?.text) result.texts.push(text.text.slice(0, MAX_TEXT_CHARS));
-    } catch {
+    } catch (error) {
+      console.error("PDF text extraction failed:", error.message);
       result.partial = true;
     }
 
@@ -138,7 +147,8 @@ const extractPdf = async (buffer) => {
           });
         }
       }
-    } catch {
+    } catch (error) {
+      console.error("PDF page rendering failed:", error.message);
       result.partial = true;
     }
 
@@ -176,7 +186,8 @@ const extractPdf = async (buffer) => {
       // This is deliberately a sample of images beyond the rendered pages.
       // Hitting the sample limit is expected for a long PDF, not a failed
       // extraction, so it does not by itself send a clean upload for review.
-    } catch {
+    } catch (error) {
+      console.error("PDF embedded-image extraction failed:", error.message);
       result.partial = true;
     }
   } finally {
