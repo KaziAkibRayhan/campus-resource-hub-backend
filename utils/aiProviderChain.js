@@ -31,16 +31,20 @@ const PROVIDERS = [
     provider: "cerebras",
     envNames: ["CEREBRAS_API_KEY"],
     baseURL: "https://api.cerebras.ai/v1",
-    model: () => process.env.CEREBRAS_MODEL || "llama-3.3-70b",
+    // Check GET /v1/models before changing this — Cerebras serves a short,
+    // shifting list and an unknown id returns 404, not a helpful message.
+    model: () => process.env.CEREBRAS_MODEL || "gpt-oss-120b",
   },
   {
     provider: "openrouter",
     envNames: ["OPENROUTER_API_KEY"],
     baseURL: "https://openrouter.ai/api/v1",
-    // OpenRouter's free model ids carry a ":free" suffix and are retired from
-    // time to time; override with OPENROUTER_MODEL when one disappears.
+    // Free model ids carry a ":free" suffix and are retired or moved to paid
+    // from time to time; override with OPENROUTER_MODEL when that happens.
+    // Pick one that answers directly: several free models emit their own
+    // reasoning ("Here's a thinking process:") as the answer.
     model: () =>
-      process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free",
+      process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-nano-30b-a3b:free",
   },
   {
     provider: "openai",
